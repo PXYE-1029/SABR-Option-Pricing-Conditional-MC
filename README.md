@@ -13,38 +13,28 @@ The main goal is to measure how much variance reduction and computational effici
 
 ## SABR Model Setup
 
-We work with the SABR model
+We work with the SABR model:
 
-$$
-dS_t = \sigma_t S_t^\beta \, dW_t,
-$$
-
-$$
-d\sigma_t = \nu \sigma_t \, dZ_t,
-$$
-
-with
-
-$$
-dW_t dZ_t = \rho \, dt.
-$$
+```text
+dS_t = sigma_t S_t^beta dW_t
+d sigma_t = nu sigma_t dZ_t
+dW_t dZ_t = rho dt
+```
 
 In the current implementation we restrict attention to **beta = 1**, so the asset dynamics reduce to a stochastic-volatility lognormal model. The parameters are:
 
-- $S_0$: initial asset price
-- $\sigma_0$: initial volatility
-- $\beta$: SABR backbone parameter
-- $\nu$: volatility of volatility
-- $\rho$: correlation between the asset and volatility shocks
-- $r$: risk-free rate
+- `S0`: initial asset price
+- `sigma0`: initial volatility
+- `beta`: SABR backbone parameter
+- `nu`: volatility of volatility
+- `rho`: correlation between the asset and volatility shocks
+- `r`: risk-free rate
 
-For the asset-path simulation, we use the beta = 1 log-Euler update
+For the asset-path simulation, we use the beta = 1 log-Euler update:
 
-$$
-\log S_{t+\Delta t}
-=
-\log S_t + \left(r - \tfrac{1}{2}\sigma_t^2\right)\Delta t + \sigma_t \sqrt{\Delta t} Z,
-$$
+```text
+log S_{t+dt} = log S_t + (r - 0.5 sigma_t^2) dt + sigma_t sqrt(dt) Z
+```
 
 with the left-endpoint volatility on each step. This preserves positivity of the simulated asset price.
 
@@ -56,39 +46,24 @@ The plain Monte Carlo pricer simulates both volatility paths and asset-price pat
 
 ### Conditional Monte Carlo
 
-For beta = 1, we use the standard decomposition
+For beta = 1, we use the standard decomposition:
 
-$$
-dW_t = \rho \, dZ_t + \sqrt{1-\rho^2} \, dW_t^\perp.
-$$
+```text
+dW_t = rho dZ_t + sqrt(1-rho^2) dW_t^perp
+```
 
-Conditioning on the volatility path gives
+Conditioning on the volatility path gives:
 
-$$
-\log S_T
-=
-\log S_0 + rT - \tfrac{1}{2}V_T + \frac{\rho}{\nu}(\sigma_T - \sigma_0)
-  + \sqrt{(1-\rho^2)V_T}\,N,
-$$
-
-where
-
-$$
-V_T = \int_0^T \sigma_t^2 \, dt.
-$$
+```text
+log S_T = log S_0 + rT - 0.5 V_T + (rho/nu)(sigma_T - sigma_0)
+          + sqrt((1-rho^2) V_T) N
+V_T = integral_0^T sigma_t^2 dt
+```
 
 This reduces each path to a conditional Black-Scholes call with:
 
-- conditional spot  
-  $$
-  S_{\text{cond}}
-  =
-  S_0 \exp\left(\frac{\rho}{\nu}(\sigma_T-\sigma_0) - \tfrac{1}{2}\rho^2 V_T\right)
-  $$
-- conditional volatility  
-  $$
-  \sigma_{\text{cond}} = \sqrt{\frac{(1-\rho^2)V_T}{T}}
-  $$
+- conditional spot: `S_cond = S_0 * exp((rho/nu)(sigma_T - sigma_0) - 0.5 rho^2 V_T)`
+- conditional volatility: `sigma_cond = sqrt((1-rho^2) V_T / T)`
 
 The conditional Monte Carlo estimator therefore replaces noisy payoff simulation with pathwise conditional prices, which substantially reduces variance.
 
@@ -96,9 +71,7 @@ The conditional Monte Carlo estimator therefore replaces noisy payoff simulation
 
 The project implements two numerical approximations for
 
-$$
-V_T = \int_0^T \sigma_t^2 \, dt:
-$$
+`V_T = integral_0^T sigma_t^2 dt`
 
 - trapezoidal rule
 - Simpson's rule
@@ -186,15 +159,15 @@ Each script:
 
 All current benchmarks use the beta = 1 SABR setup
 
-- $S_0 = 100$
-- $\sigma_0 = 0.2$
-- $K = 100$
-- $T = 1$
-- $r = 0.01$
-- $\nu = 0.4$
-- $\rho = -0.3$
+- `S0 = 100`
+- `sigma0 = 0.2`
+- `K = 100`
+- `T = 1`
+- `r = 0.01`
+- `nu = 0.4`
+- `rho = -0.3`
 
-unless a validation case explicitly sets $\nu = 0$.
+unless a validation case explicitly sets `nu = 0`.
 
 ### Main Findings
 
@@ -263,11 +236,11 @@ The key validation case is the deterministic-volatility limit:
 - when `vol_of_vol = 0`
 - and `beta = 1`
 
-the model reduces to Black-Scholes with constant volatility $\sigma_0$.
+the model reduces to Black-Scholes with constant volatility `sigma0`.
 
 This is an important consistency check for both pricers:
 
-- in the conditional Monte Carlo implementation, the `\nu = 0` branch reduces directly to the Black-Scholes call price
+- in the conditional Monte Carlo implementation, the `nu = 0` branch reduces directly to the Black-Scholes call price
 - in the plain Monte Carlo implementation, the estimator should converge to the same Black-Scholes benchmark as the number of paths increases
 
 This gives a clean analytical sanity check for both the direct simulation and the conditional representation.
