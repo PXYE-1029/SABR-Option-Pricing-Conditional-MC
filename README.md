@@ -97,8 +97,10 @@ Both operate on the same path convention used throughout the codebase:
 │   └── utils.py
 ├── experiments/
 │   ├── experiment_hagan_comparison.py
+│   ├── experiment_parameter_sweep_nu.py
 │   ├── experiment_runtime.py
 │   ├── experiment_timestep.py
+│   ├── experiment_validation_bs_limit.py
 │   └── experiment_variance.py
 ├── results/
 │   ├── figures/
@@ -149,11 +151,28 @@ Run the timestep sensitivity experiment:
 python3 experiments/experiment_timestep.py
 ```
 
+Run the dedicated Black-Scholes-limit validation experiment:
+
+```bash
+python3 experiments/experiment_validation_bs_limit.py
+```
+
+Run the vol-of-vol parameter sweep:
+
+```bash
+python3 experiments/experiment_parameter_sweep_nu.py
+```
+
 Each script:
 
 - prints a short summary to the terminal
 - saves a CSV table under `results/tables/`
 - saves one or more figures under `results/figures/`
+
+### Additional Experiment Coverage
+
+- `experiment_validation_bs_limit.py` isolates the `nu = 0` deterministic-volatility case and compares plain MC, conditional MC, and the exact Black-Scholes benchmark across several path counts.
+- `experiment_parameter_sweep_nu.py` varies the SABR vol-of-vol parameter `nu` over a fixed grid to test whether the conditional Monte Carlo variance-reduction advantage persists away from the baseline parameter set.
 
 ## Results Summary
 
@@ -244,6 +263,26 @@ This is an important consistency check for both pricers:
 - in the plain Monte Carlo implementation, the estimator should converge to the same Black-Scholes benchmark as the number of paths increases
 
 This gives a clean analytical sanity check for both the direct simulation and the conditional representation.
+
+The repository now includes a dedicated validation script for this case:
+
+- `experiments/experiment_validation_bs_limit.py`
+
+It is intended to produce:
+
+- `results/tables/validation_bs_limit_beta1_call.csv`
+- `results/figures/validation_bs_limit_prices_beta1_call.png`
+- `results/figures/validation_bs_limit_abs_error_beta1_call.png`
+
+In addition, the repository now includes a dedicated vol-of-vol sweep:
+
+- `experiments/experiment_parameter_sweep_nu.py`
+
+This script is intended to produce:
+
+- `results/tables/parameter_sweep_nu_beta1_call.csv`
+- `results/figures/parameter_sweep_nu_standard_errors_beta1_call.png`
+- `results/figures/parameter_sweep_nu_variance_ratio_beta1_call.png`
 
 ## Current Limitations
 
