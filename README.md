@@ -17,11 +17,13 @@ The main goal is to measure how much variance reduction and computational effici
 
 We work with the SABR model:
 
-```text
-dS_t = sigma_t S_t^beta dW_t
-d sigma_t = nu sigma_t dZ_t
-dW_t dZ_t = rho dt
-```
+$$
+\begin{aligned}
+dS_t &= \sigma_t S_t^{\beta}\, dW_t \\
+d\sigma_t &= \nu\, \sigma_t\, dZ_t \\
+dW_t\, dZ_t &= \rho\, dt
+\end{aligned}
+$$
 
 In the current implementation we restrict attention to **beta = 1**, so the asset dynamics reduce to a stochastic-volatility lognormal model. The parameters are:
 
@@ -34,9 +36,9 @@ In the current implementation we restrict attention to **beta = 1**, so the asse
 
 For the asset-path simulation, we use the beta = 1 log-Euler update:
 
-```text
-log S_{t+dt} = log S_t + (r - 0.5 sigma_t^2) dt + sigma_t sqrt(dt) Z
-```
+$$
+\log S_{t+dt} = \log S_t + \left(r - \tfrac{1}{2}\sigma_t^2\right) dt + \sigma_t \sqrt{dt}\, Z
+$$
 
 with the left-endpoint volatility on each step. This preserves positivity of the simulated asset price.
 
@@ -48,19 +50,20 @@ The plain Monte Carlo pricer simulates both volatility paths and asset-price pat
 
 ### Conditional Monte Carlo
 
-For beta = 1, we use the standard decomposition:
+For $\beta = 1$, we use the standard decomposition:
 
-```text
-dW_t = rho dZ_t + sqrt(1-rho^2) dW_t^perp
-```
+$$
+dW_t = \rho\, dZ_t + \sqrt{1 - \rho^2}\, dW_t^{\perp}
+$$
 
 Conditioning on the volatility path gives:
 
-```text
-log S_T = log S_0 + rT - 0.5 V_T + (rho/nu)(sigma_T - sigma_0)
-          + sqrt((1-rho^2) V_T) N
-V_T = integral_0^T sigma_t^2 dt
-```
+$$
+\begin{aligned}
+\log S_T &= \log S_0 + rT - \tfrac{1}{2} V_T + \frac{\rho}{\nu}\left(\sigma_T - \sigma_0\right) + \sqrt{(1-\rho^2)\, V_T}\, N \\
+V_T &= \int_0^T \sigma_t^2\, dt
+\end{aligned}
+$$
 
 This reduces each path to a conditional Black-Scholes call with:
 
