@@ -2,6 +2,8 @@
 
 *A Python implementation of SABR option pricing with plain Monte Carlo, conditional Monte Carlo, integrated variance approximation, and benchmarking for a MATH 5030 final project.*
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PXYE-1029/SABR-Option-Pricing-Conditional-MC/blob/main/notebooks/demo.ipynb)
+
 ## Project Overview
 
 This repository studies numerical pricing of European call options under the SABR stochastic volatility model. The project focuses on the beta = 1 case and compares two estimators:
@@ -85,8 +87,15 @@ Both operate on the same path convention used throughout the codebase:
 
 ```text
 .
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── LICENSE
 ├── README.md
+├── pyproject.toml
 ├── requirements.txt
+├── notebooks/
+│   └── demo.ipynb
 ├── src/
 │   ├── __init__.py
 │   ├── black_scholes.py
@@ -105,8 +114,12 @@ Both operate on the same path convention used throughout the codebase:
 ├── results/
 │   ├── figures/
 │   └── tables/
-└── report/
-    └── references.md
+├── report/
+│   └── references.md
+└── tests/
+    ├── test_black_scholes.py
+    ├── test_conditional_mc.py
+    └── test_integration.py
 ```
 
 Key saved outputs:
@@ -125,11 +138,73 @@ cd SABR-Option-Pricing-Conditional-MC
 python3 -m pip install -r requirements.txt
 ```
 
-The project currently depends on:
+Install the project as a package:
+
+```bash
+python3 -m pip install .
+```
+
+Install in editable mode for development and testing:
+
+```bash
+python3 -m pip install -e ".[dev]"
+```
+
+Run the test suite:
+
+```bash
+python3 -m pytest
+```
+
+The core runtime dependencies are:
 
 - `numpy`
 - `scipy`
 - `matplotlib`
+
+The project also includes a GitHub Actions workflow in `.github/workflows/ci.yml`
+that runs the tests on Python 3.10, 3.11, and 3.12.
+
+## Quick Start
+
+The package currently exposes its modules under the `src` import namespace.
+
+```python
+from src.utils import SABRModelParameters, EuropeanOption
+from src.mc_pricer import price_european_option_mc
+from src.conditional_mc import price_european_option_conditional_mc
+
+parameters = SABRModelParameters(
+    spot=100.0,
+    initial_volatility=0.2,
+    beta=1.0,
+    vol_of_vol=0.4,
+    correlation=-0.3,
+    risk_free_rate=0.01,
+)
+option = EuropeanOption(strike=100.0, maturity=1.0, option_type="call")
+
+mc_result = price_european_option_mc(
+    parameters=parameters,
+    option=option,
+    n_steps=50,
+    n_paths=5000,
+    seed=123,
+)
+cmc_result = price_european_option_conditional_mc(
+    parameters=parameters,
+    option=option,
+    n_steps=50,
+    n_paths=5000,
+    seed=123,
+    integration_method="trapezoidal",
+)
+
+print(mc_result.price, mc_result.standard_error)
+print(cmc_result.price, cmc_result.standard_error)
+```
+
+For a notebook version of this workflow, see [notebooks/demo.ipynb](notebooks/demo.ipynb).
 
 ## How to Run
 
@@ -168,6 +243,28 @@ Each script:
 - prints a short summary to the terminal
 - saves a CSV table under `results/tables/`
 - saves one or more figures under `results/figures/`
+
+## API Reference
+
+Core public modules:
+
+- `src.utils`
+  Exposes `SABRModelParameters` and `EuropeanOption`, along with shared helpers
+  such as `get_rng`, `standard_error`, and `time_call`.
+- `src.black_scholes`
+  Provides `black_scholes_call_price` and `black_scholes_price` for scalar or
+  vectorized Black-Scholes pricing.
+- `src.sabr_simulation`
+  Provides `simulate_volatility_paths` and `simulate_sabr_paths` for the beta = 1
+  SABR simulation layer.
+- `src.mc_pricer`
+  Provides `price_european_option_mc` and returns `MonteCarloPricingResult`.
+- `src.conditional_mc`
+  Provides `price_european_option_conditional_mc` and returns
+  `ConditionalMonteCarloPricingResult`.
+- `src.integration`
+  Provides `trapezoidal_rule`, `simpson_rule`,
+  `trapezoidal_integrated_variance`, and `simpson_integrated_variance`.
 
 ### Additional Experiment Coverage
 
