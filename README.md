@@ -67,8 +67,14 @@ $$
 
 This reduces each path to a conditional Black-Scholes call with:
 
-- conditional spot: `S_cond = S_0 * exp((rho/nu)(sigma_T - sigma_0) - 0.5 rho^2 V_T)`
-- conditional volatility: `sigma_cond = sqrt((1-rho^2) V_T / T)`
+- conditional spot: 
+$$
+S_{\text{cond}} = S_0 \exp\!\left(\frac{\rho}{\nu}(\sigma_T - \sigma_0) - \tfrac{1}{2}\rho^2 V_T\right)
+$$
+- conditional volatility: 
+$$
+\sigma_{\text{cond}} = \sqrt{\frac{(1-\rho^2)\, V_T}{T}}
+$$
 
 The conditional Monte Carlo estimator therefore replaces noisy payoff simulation with pathwise conditional prices, which substantially reduces variance.
 
@@ -76,7 +82,9 @@ The conditional Monte Carlo estimator therefore replaces noisy payoff simulation
 
 The project implements two numerical approximations for
 
-`V_T = integral_0^T sigma_t^2 dt`
+$$
+V_T = \int_0^T \sigma_t^2\, dt
+$$
 
 - trapezoidal rule
 - Simpson's rule
