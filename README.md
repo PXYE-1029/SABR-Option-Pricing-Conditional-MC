@@ -26,9 +26,9 @@ The Phase 2 CEV-Heston simulator advances \((F_t, v_t)\) over each time step \([
 
 First, we sample the next variance \(v_{t+h}\) and the integrated variance over the step,
 
-$$
+```math
 I_t^h = \int_t^{t+h} v_s\,ds.
-$$
+```
 
 This step uses PyFENG's Heston Poisson-conditioning implementation, `HestonMcChoiKwok2023PoisGe`, as the variance-side backend. When PyFENG is unavailable or when \(\xi = 0\), an Andersen QE-style fallback is used.
 
@@ -38,13 +38,13 @@ Given \(v_t\), \(v_{t+h}\), and \(I_t^h\), we compute the conditional mean adjus
 
 The key identity comes from the CIR variance process:
 
-$$
+```math
 \int_t^{t+h}\sqrt{v_s}\,dW_s^v
 =
 \frac{
 v_{t+h}-v_t-\kappa\theta h+\kappa I_t^h
 }{\xi}.
-$$
+```
 
 This identity allows the correlated variance Brownian integral to be expressed using quantities already sampled in the variance step. As a result, no additional random draw is needed for this correlated component.
 
@@ -69,6 +69,8 @@ Overall, the method combines:
 - and exact CEV sampling for the asset-price step.
 
 The goal is to improve martingale preservation and the accuracy-efficiency tradeoff relative to simpler simulation baselines.
+
+Implementation details and numerical routines are provided in `src/`.
 ## Repository structure
 
 ```text
