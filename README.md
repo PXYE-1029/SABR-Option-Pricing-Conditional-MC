@@ -8,7 +8,7 @@ Numerical option pricing in Python for a MATH 5030 final project, centered on SA
 
 This project started as a numerical study of European call pricing under the SABR stochastic volatility model. The main completed implementation is a `beta = 1` SABR pricing framework that compares plain Monte Carlo with conditional Monte Carlo and measures the gains in variance reduction, runtime, and numerical stability.
 
-After professor feedback, we added a second direction: a Beta-Heston extension. This replaces the usual geometric-Brownian-motion asset base in Heston with a SABR/CEV-style `S_t^beta` diffusion. The current implementation of that extension uses an Euler variance backend, while this feature branch also contains a further experimental PyFENG-backed variance / integrated-variance backend.
+After professor feedback, we added a second direction: a Beta-Heston extension. This replaces the usual geometric-Brownian-motion asset base in Heston with a SABR/CEV-style $S_t^\beta$ diffusion. The current implementation of that extension uses an Euler variance backend, while this feature branch also contains a further experimental PyFENG-backed variance / integrated-variance backend.
 
 ### Instructor Feedback and Project Extension
 
@@ -66,7 +66,7 @@ In the runtime benchmark at the same path count, conditional Monte Carlo is also
 
 ## Part II: Beta-Heston Extension
 
-Professor feedback suggested extending the Heston model by replacing the standard GBM asset base with a SABR-style `S_t^beta` process.
+Professor feedback suggested extending the Heston model by replacing the standard GBM asset base with a SABR-style $S_t^\beta$ process.
 
 The model studied in this extension is
 
@@ -83,7 +83,12 @@ $$
 The current Beta-Heston implementation in this repository is a lightweight prototype:
 
 - Heston variance paths are simulated with full-truncation Euler
-- the asset process uses `dS_t = r S_t dt + sqrt(v_t) S_t^beta dW_t`
+- the asset process uses
+
+$$
+dS_t = rS_t\,dt + \sqrt{v_t}S_t^\beta\,dW_t.
+$$
+
 - the conditional asset step uses a corrected Heston-specific conditional mean
 - for `beta = 1`, the conditional step reduces to a lognormal form
 - for `0 < beta < 1`, the asset step uses a prototype CEV-style approximation
@@ -110,7 +115,7 @@ This feature branch also includes an experimental PyFENG-backed extension.
 
 - this work lives on `feature/option-b-pyfeng-backend`
 - PyFENG is used only for the Heston variance / integrated-variance simulation
-- the custom `S_t^beta` asset layer remains in this repository
+- the custom $S_t^\beta$ asset layer remains in this repository
 - the default backend is still Euler
 - PyFENG is optional and is not required for the main project
 
@@ -289,7 +294,7 @@ python3 -m pytest
 - The Beta-Heston extension is still a prototype rather than a finished second project.
 - The `beta < 1` CEV-style asset step is still approximate.
 - In this branch, the PyFENG backend is optional and experimental, not the default.
-- The PyFENG path changes only the variance / integrated-variance backend; the `S_t^beta` asset layer remains custom.
+- The PyFENG path changes only the variance / integrated-variance backend; the $S_t^\beta$ asset layer remains custom.
 - PyFENG also introduces GPL licensing considerations, so this optional backend should be treated carefully before broader distribution.
 
 ## References
@@ -298,5 +303,5 @@ python3 -m pytest
 - Black, F., and Scholes, M. (1973). *The Pricing of Options and Corporate Liabilities*.
 - Glasserman, P. (2003). *Monte Carlo Methods in Financial Engineering*.
 - Choi, J., and Kwok, Y. K. (2023). *Simulation Schemes for the Heston Model with Poisson Conditioning*.
-- SABR-style `S_t^beta` conditional simulation ideas discussed in professor feedback and related SABR/CEV literature.
+- SABR-style $S_t^\beta$ conditional simulation ideas discussed in professor feedback and related SABR/CEV literature.
 - Course materials for **MATH 5030 (Numerical Methods)**.
