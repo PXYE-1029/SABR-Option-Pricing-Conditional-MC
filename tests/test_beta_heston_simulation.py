@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from experiments.experiment_beta_heston_prototype import run_experiment
 from src.beta_heston_simulation import (
     BetaHestonParameters,
     _compute_heston_conditional_step_terms,
     _conditional_mean_anchor,
+    price_beta_heston_european_call_euler,
     price_beta_heston_european_call_conditional_approximation,
     simulate_beta_heston_asset_paths_euler,
     simulate_beta_heston_variance_paths,
@@ -185,21 +185,41 @@ def test_near_zero_xi_uses_the_clean_edge_case_branch() -> None:
     )
 
 
-def test_beta_heston_prototype_experiment_runs_on_small_configuration(tmp_path) -> None:
-    """The prototype experiment should run and save outputs on a small grid."""
+def test_beta_heston_small_pricers_run_directly() -> None:
+    """The small Beta-Heston pricing paths should run without experiment imports."""
 
-    table_path = tmp_path / "beta_heston_small.csv"
-    figure_path = tmp_path / "beta_heston_small.png"
-    rows = run_experiment(
-        beta_values=[1.0, 0.7],
+    parameters = BetaHestonParameters(
+        spot=100.0,
+        v0=0.04,
+        kappa=1.5,
+        theta=0.04,
+        xi=0.4,
+        beta=0.7,
+        rho=-0.5,
+        risk_free_rate=0.01,
+    )
+    option = EuropeanOption(strike=100.0, maturity=1.0, option_type="call")
+
+    euler_result = price_beta_heston_european_call_euler(
+        parameters=parameters,
+        option=option,
         n_steps=10,
-        n_paths=200,
-        table_path=table_path,
-        figure_path=figure_path,
+        n_paths=256,
+        seed=123,
+    )
+    conditional_result = price_beta_heston_european_call_conditional_approximation(
+        parameters=parameters,
+        option=option,
+        n_steps=10,
+        n_paths=256,
+        seed=123,
     )
 
-    assert len(rows) == 2
-    assert table_path.exists()
-    assert figure_path.exists()
-    assert all("euler_price" in row for row in rows)
-    assert all("conditional_approximation_price" in row for row in rows)
+    assert np.isfinite(euler_result.price)
+    assert np.isfinite(conditional_result.price)
+    assert euler_result.price >= 0.0
+    assert conditional_result.price >= 0.0
+    assert euler_result.standard_error >= 0.0
+    assert conditional_result.standard_error >= 0.0
+    assert euler_result.simulation.asset_paths.shape == (256, 11)
+    assert conditional_result.simulation.asset_paths.shape == (256, 11)
