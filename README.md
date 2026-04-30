@@ -20,21 +20,21 @@ $$
 
 ## Method
 
-The Phase 2 CEV-Heston simulator advances \((F_t, v_t)\) over each time step \([t,t+h]\) using a three-step framework.
+The Phase 2 CEV-Heston simulator advances $(F_t, v_t)$ over each time step $[t,t+h]$ using a three-step framework.
 
 ### 1. Variance Step
 
-First, we sample the next variance \(v_{t+h}\) and the integrated variance over the step,
+First, we sample the next variance $v_{t+h}$ and the integrated variance over the step,
 
 ```math
 I_t^h = \int_t^{t+h} v_s\,ds.
 ```
 
-This step uses PyFENG's Heston Poisson-conditioning implementation, `HestonMcChoiKwok2023PoisGe`, as the variance-side backend. When PyFENG is unavailable or when \(\xi = 0\), an Andersen QE-style fallback is used.
+This step uses PyFENG's Heston Poisson-conditioning implementation, `HestonMcChoiKwok2023PoisGe`, as the variance-side backend. When PyFENG is unavailable or when $\xi = 0$, an Andersen QE-style fallback is used.
 
 ### 2. Conditional Mean Step
 
-Given \(v_t\), \(v_{t+h}\), and \(I_t^h\), we compute the conditional mean adjustment for the forward-price step.
+Given $v_t$, $v_{t+h}$, and $I_t^h$, we compute the conditional mean adjustment for the forward-price step.
 
 The key identity comes from the CIR variance process:
 
@@ -52,7 +52,7 @@ This conditional-mean adjustment is the main mathematical modification needed wh
 
 ### 3. Conditional CEV Sampling Step
 
-After the conditional mean is computed, the next forward price \(F_{t+h}\) is sampled from a CEV-style conditional distribution.
+After the conditional mean is computed, the next forward price $F_{t+h}$ is sampled from a CEV-style conditional distribution.
 
 The implementation uses an exact CEV sampler based on the shifted-Poisson-mixture-Gamma representation of Makarov-Glew (2010) and Kang (2014). This avoids inverse-CDF root finding and replaces a naive full-path Euler update with a structured conditional sampling step.
 
