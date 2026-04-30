@@ -1,174 +1,188 @@
 # SABR Option Pricing with Conditional Monte Carlo
 
-*A Python implementation of SABR option pricing with plain Monte Carlo, conditional Monte Carlo, integrated variance approximation, and benchmarking for a MATH 5030 final project.*
-
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PXYE-1029/SABR-Option-Pricing-Conditional-MC/blob/main/notebooks/demo.ipynb)
+
+Numerical option pricing in Python for a MATH 5030 final project, centered on SABR conditional Monte Carlo and a prototype Beta-Heston extension.
 
 ## Project Overview
 
-This repository studies numerical pricing of European call options under the SABR stochastic volatility model. The project focuses on the beta = 1 case and compares two estimators:
+This project started as a numerical study of European call pricing under the SABR stochastic volatility model. The main completed implementation is a `beta = 1` SABR pricing framework that compares plain Monte Carlo with conditional Monte Carlo and measures the gains in variance reduction, runtime, and numerical stability.
 
-- plain Monte Carlo, which simulates the full asset path directly
-- conditional Monte Carlo, which simulates only the volatility path and then prices conditionally with a Black-Scholes formula
+After professor feedback, we added a second direction: a Beta-Heston extension. This replaces the usual geometric-Brownian-motion asset base in Heston with a SABR/CEV-style `S_t^beta` diffusion. The current implementation of that extension uses an Euler variance backend, while this feature branch also contains a further experimental PyFENG-backed variance / integrated-variance backend.
 
-The main goal is to measure how much variance reduction and computational efficiency can be gained from conditioning on the volatility path. The repository includes reusable pricing modules, experiment scripts, saved benchmark tables, and figures suitable for a course project report.
+### Instructor Feedback and Project Extension
 
-The repository now also includes a **Beta-Heston Extension** prototype, added after feedback from the course instructor. This new direction keeps the Heston variance process but replaces the usual geometric-BM asset base with a SABR/CEV-style `S_t^beta` asset process.
+The original project topic was SABR `beta = 1` option pricing with conditional Monte Carlo. After instructor feedback, we extended the project by combining a Heston variance process with a SABR/CEV-style beta-power asset process, which led to the current Beta-Heston prototype and the experimental PyFENG-backed branch work.
 
-## SABR Model Setup
+## Part I: SABR Conditional Monte Carlo
 
-We work with the SABR model:
+### Model Setup
 
-$$
-\begin{aligned}
-dS_t &= \sigma_t S_t^{\beta}\, dW_t \\
-d\sigma_t &= \nu\, \sigma_t\, dZ_t \\
-dW_t\, dZ_t &= \rho\, dt
-\end{aligned}
-$$
+The SABR model used in this project is
 
-In the current implementation we restrict attention to **beta = 1**, so the asset dynamics reduce to a stochastic-volatility lognormal model. The parameters are:
+```text
+dS_t = sigma_t S_t^beta dW_t
+d sigma_t = nu sigma_t dZ_t
+dW_t dZ_t = rho dt
+```
+
+The implemented SABR pricing layer is restricted to `beta = 1`, so the asset process becomes a lognormal stochastic-volatility model. The main inputs are:
 
 - `S0`: initial asset price
 - `sigma0`: initial volatility
-- `beta`: SABR backbone parameter
 - `nu`: volatility of volatility
-- `rho`: correlation between the asset and volatility shocks
+- `rho`: correlation
 - `r`: risk-free rate
 
-For the asset-path simulation, we use the beta = 1 log-Euler update:
+### Numerical Methods
 
-$$
-\log S_{t+dt} = \log S_t + \left(r - \tfrac{1}{2}\sigma_t^2\right) dt + \sigma_t \sqrt{dt}\, Z
-$$
+The SABR portion of the project implements:
 
-with the left-endpoint volatility on each step. This preserves positivity of the simulated asset price.
+- plain Monte Carlo, which simulates volatility paths and full asset paths directly
+- conditional Monte Carlo, which conditions on the volatility path and prices each path with a conditional Black-Scholes formula
+- trapezoidal and Simpson approximations for the integrated variance
 
-## Numerical Methods Implemented
+For `beta = 1`, the conditional representation uses the integrated variance
 
-### Plain Monte Carlo
+```text
+V_T = integral_0^T sigma_t^2 dt
+```
 
-The plain Monte Carlo pricer simulates both volatility paths and asset-price paths, computes discounted call payoffs, and estimates the option value by a sample average.
+and turns the terminal pricing problem into a pathwise Black-Scholes call evaluation with much lower variance than direct payoff simulation.
 
-### Conditional Monte Carlo
+### Main SABR Result
 
-For $\beta = 1$, we use the standard decomposition:
+The main conclusion is clear: conditional Monte Carlo reduces standard error substantially relative to plain Monte Carlo.
 
-$$
-dW_t = \rho\, dZ_t + \sqrt{1 - \rho^2}\, dW_t^{\perp}
-$$
+At `50,000` paths in the saved variance benchmark:
 
-Conditioning on the volatility path gives:
+- plain MC standard error: `0.0591`
+- conditional MC standard error: `0.00875`
+- variance reduction ratio: `45.53`
 
-$$
-\begin{aligned}
-\log S_T &= \log S_0 + rT - \tfrac{1}{2} V_T + \frac{\rho}{\nu}\left(\sigma_T - \sigma_0\right) + \sqrt{(1-\rho^2)\, V_T}\, N \\
-V_T &= \int_0^T \sigma_t^2\, dt
-\end{aligned}
-$$
+In the runtime benchmark at the same path count, conditional Monte Carlo is also slightly faster in the current implementation.
 
-This reduces each path to a conditional Black-Scholes call with:
+## Part II: Beta-Heston Extension
 
-- conditional spot: 
+Professor feedback suggested extending the Heston model by replacing the standard GBM asset base with a SABR-style `S_t^beta` process.
 
-$$
-\begin{aligned}
-S_{\text{cond}} = S_0 \exp\!\left(\frac{\rho}{\nu}(\sigma_T - \sigma_0) - \tfrac{1}{2}\rho^2 V_T\right)
-\end{aligned}
-$$
+The model studied in this extension is
 
-- conditional volatility: 
+```text
+dv_t = kappa (theta - v_t) dt + xi sqrt(v_t) dZ_t
+dS_t = r S_t dt + sqrt(v_t) S_t^beta dW_t
+dW_t dZ_t = rho dt
+```
 
-$$
-\begin{aligned}
-\sigma_{\text{cond}} = \sqrt{\frac{(1-\rho^2)\, V_T}{T}}
-\end{aligned}
-$$
+### Current Beta-Heston Prototype
 
+The current Beta-Heston implementation in this repository is a lightweight prototype:
 
-The conditional Monte Carlo estimator therefore replaces noisy payoff simulation with pathwise conditional prices, which substantially reduces variance.
+- Heston variance paths are simulated with full-truncation Euler
+- the asset process uses `dS_t = r S_t dt + sqrt(v_t) S_t^beta dW_t`
+- the conditional asset step uses a corrected Heston-specific conditional mean
+- for `beta = 1`, the conditional step reduces to a lognormal form
+- for `0 < beta < 1`, the asset step uses a prototype CEV-style approximation
 
-### Integrated Variance Approximation
+The key Heston-specific correction is
 
-The project implements two numerical approximations for
+```text
+A_step = (v_{t+h} - v_t - kappa theta h + kappa I_step) / xi
+```
 
-$$
-V_T = \int_0^T \sigma_t^2\, dt
-$$
+where `I_step` approximates `integral_t^{t+h} v_s ds`. This replaces directly copying the SABR volatility correction and instead uses the Heston variance identity appropriate for this model.
 
-- trapezoidal rule
-- Simpson's rule
+This Beta-Heston layer is intentionally presented as a prototype rather than a finished pricing method.
 
-Both operate on the same path convention used throughout the codebase:
+### Experimental PyFENG Backend
 
-- path arrays have shape `(n_paths, n_steps + 1)`
-- shock arrays have shape `(n_paths, n_steps)`
+This feature branch also includes an experimental PyFENG-backed extension.
+
+- this work lives on `feature/option-b-pyfeng-backend`
+- PyFENG is used only for the Heston variance / integrated-variance simulation
+- the custom `S_t^beta` asset layer remains in this repository
+- the default backend is still Euler
+- PyFENG is optional and is not required for the main project
+
+The PyFENG-backed backend currently uses `HestonMcChoiKwok2023PoisTd` to generate Heston variance and average variance step information, which is then fed into the project’s own Beta-Heston conditional asset layer.
+
+This should be treated as experimental branch work, not as the default project implementation.
+
+## Numerical Results
+
+### SABR
+
+The strongest completed result in the project is the SABR variance reduction result:
+
+- conditional Monte Carlo reduces standard error by about a factor of `6.7`
+- the pathwise variance reduction ratio is about `45.5`
+
+### Current Beta-Heston Prototype
+
+For the Beta-Heston prototype comparison, the corrected conditional approximation stays reasonably close to the Euler baseline across the tested beta values:
+
+- `beta = 1.0`: absolute price difference `0.084`
+- `beta = 0.7`: absolute price difference `0.022`
+- `beta = 0.5`: absolute price difference `0.009`
+
+This is useful as a first consistency check, but the `beta < 1` asset step is still approximate.
+
+### Experimental PyFENG Backend
+
+Because this branch contains the experimental PyFENG backend comparison, we also report the current backend comparison result.
+
+The important interpretation is not that PyFENG is already “better,” but that changing the variance / integrated-variance backend can move prices even when the asset-side approximation is kept fixed.
+
+In the current saved run:
+
+- at `beta = 1.0`, the Euler and PyFENG prices differ by about `0.243`
+- at `beta = 0.5`, the two prices are nearly identical, differing by about `0.00021`
+- the comparison CSV also reports average integrated variance under each backend to help diagnose these differences
 
 ## Repository Structure
 
 ```text
 .
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── LICENSE
 ├── README.md
 ├── pyproject.toml
 ├── requirements.txt
-├── notebooks/
-│   └── demo.ipynb
+├── LICENSE
 ├── src/
-│   ├── __init__.py
-│   ├── beta_heston_simulation.py
+│   ├── utils.py
 │   ├── black_scholes.py
-│   ├── conditional_mc.py
 │   ├── integration.py
-│   ├── mc_pricer.py
 │   ├── sabr_simulation.py
-│   └── utils.py
+│   ├── mc_pricer.py
+│   ├── conditional_mc.py
+│   └── beta_heston_simulation.py
 ├── experiments/
-│   ├── experiment_hagan_comparison.py
-│   ├── experiment_beta_heston_backend_comparison.py
-│   ├── experiment_beta_heston_prototype.py
-│   ├── experiment_parameter_sweep_nu.py
 │   ├── experiment_runtime.py
+│   ├── experiment_variance.py
 │   ├── experiment_timestep.py
 │   ├── experiment_validation_bs_limit.py
-│   └── experiment_variance.py
+│   ├── experiment_parameter_sweep_nu.py
+│   ├── experiment_beta_heston_prototype.py
+│   └── experiment_beta_heston_backend_comparison.py
 ├── results/
-│   ├── figures/
-│   └── tables/
-├── report/
-│   └── references.md
-└── tests/
-    ├── test_beta_heston_simulation.py
-    ├── test_black_scholes.py
-    ├── test_conditional_mc.py
-    └── test_integration.py
+│   ├── tables/
+│   └── figures/
+├── notebooks/
+│   └── demo.ipynb
+├── tests/
+│   ├── test_beta_heston_simulation.py
+│   ├── test_black_scholes.py
+│   ├── test_conditional_mc.py
+│   └── test_integration.py
+└── report/
+    └── references.md
 ```
 
-Key saved outputs:
+## Installation and Quick Start
 
-- Beta-Heston backend comparison table: [results/tables/beta_heston_backend_comparison.csv](results/tables/beta_heston_backend_comparison.csv)
-- Beta-Heston prototype table: [results/tables/beta_heston_prototype_comparison.csv](results/tables/beta_heston_prototype_comparison.csv)
-- variance benchmark table: [results/tables/variance_comparison_beta1_call.csv](results/tables/variance_comparison_beta1_call.csv)
-- timestep benchmark table: [results/tables/timestep_sensitivity_beta1_call.csv](results/tables/timestep_sensitivity_beta1_call.csv)
-- runtime benchmark table: [results/tables/runtime_benchmark_beta1_call.csv](results/tables/runtime_benchmark_beta1_call.csv)
-
-## Installation
-
-Clone the repository and install the required packages:
+Install the standard project dependencies:
 
 ```bash
-git clone https://github.com/PXYE-1029/SABR-Option-Pricing-Conditional-MC.git
-cd SABR-Option-Pricing-Conditional-MC
 python3 -m pip install -r requirements.txt
-```
-
-Install the project as a package:
-
-```bash
-python3 -m pip install .
 ```
 
 Install in editable mode for development and testing:
@@ -177,30 +191,13 @@ Install in editable mode for development and testing:
 python3 -m pip install -e ".[dev]"
 ```
 
-Install the optional PyFENG backend for the Beta-Heston extension:
+Because this branch includes the experimental PyFENG backend, the optional PyFENG extra can also be installed:
 
 ```bash
 python3 -m pip install -e ".[pyfeng]"
 ```
 
-Run the test suite:
-
-```bash
-python3 -m pytest
-```
-
-The core runtime dependencies are:
-
-- `numpy`
-- `scipy`
-- `matplotlib`
-
-The project also includes a GitHub Actions workflow in `.github/workflows/ci.yml`
-that runs the tests on Python 3.10, 3.11, and 3.12.
-
-## Quick Start
-
-The package currently exposes its modules under the `src` import namespace.
+### Quick Start Example
 
 ```python
 from src.utils import SABRModelParameters, EuropeanOption
@@ -237,20 +234,16 @@ print(mc_result.price, mc_result.standard_error)
 print(cmc_result.price, cmc_result.standard_error)
 ```
 
-For a notebook version of this workflow, see [notebooks/demo.ipynb](notebooks/demo.ipynb).
+## How to Run Experiments
 
-## How to Run
-
-Run the runtime benchmark:
-
-```bash
-python3 experiments/experiment_runtime.py
-```
-
-Run the variance comparison:
+Run the core SABR experiments:
 
 ```bash
 python3 experiments/experiment_variance.py
+python3 experiments/experiment_runtime.py
+python3 experiments/experiment_timestep.py
+python3 experiments/experiment_validation_bs_limit.py
+python3 experiments/experiment_parameter_sweep_nu.py
 ```
 
 Run the Beta-Heston prototype experiment:
@@ -259,282 +252,41 @@ Run the Beta-Heston prototype experiment:
 python3 experiments/experiment_beta_heston_prototype.py
 ```
 
-Run the optional Beta-Heston Euler-vs-PyFENG backend comparison:
+Run the experimental PyFENG backend comparison in this branch:
 
 ```bash
 python3 experiments/experiment_beta_heston_backend_comparison.py
 ```
 
-Run the timestep sensitivity experiment:
+## Tests and CI
+
+The repository includes:
+
+- local tests with `pytest`
+- GitHub Actions CI
+- tested Python versions: `3.10`, `3.11`, and `3.12`
+
+Run the tests locally with:
 
 ```bash
-python3 experiments/experiment_timestep.py
+python3 -m pytest
 ```
-
-Run the dedicated Black-Scholes-limit validation experiment:
-
-```bash
-python3 experiments/experiment_validation_bs_limit.py
-```
-
-Run the vol-of-vol parameter sweep:
-
-```bash
-python3 experiments/experiment_parameter_sweep_nu.py
-```
-
-Each script:
-
-- prints a short summary to the terminal
-- saves a CSV table under `results/tables/`
-- saves one or more figures under `results/figures/`
-
-## API Reference
-
-Core public modules:
-
-- `src.utils`
-  Exposes `SABRModelParameters` and `EuropeanOption`, along with shared helpers
-  such as `get_rng`, `standard_error`, and `time_call`.
-- `src.black_scholes`
-  Provides `black_scholes_call_price` and `black_scholes_price` for scalar or
-  vectorized Black-Scholes pricing.
-- `src.sabr_simulation`
-  Provides `simulate_volatility_paths` and `simulate_sabr_paths` for the beta = 1
-  SABR simulation layer.
-- `src.mc_pricer`
-  Provides `price_european_option_mc` and returns `MonteCarloPricingResult`.
-- `src.conditional_mc`
-  Provides `price_european_option_conditional_mc` and returns
-  `ConditionalMonteCarloPricingResult`.
-- `src.integration`
-  Provides `trapezoidal_rule`, `simpson_rule`,
-  `trapezoidal_integrated_variance`, and `simpson_integrated_variance`.
-- `src.beta_heston_simulation`
-  Provides the separate Beta-Heston prototype layer, including
-  `BetaHestonParameters`, Heston variance-path simulation with either the
-  default Euler backend or the optional `pyfeng_choi_kwok_td` backend,
-  baseline Euler asset simulation, and the prototype CEV conditional
-  approximation.
-
-## Beta-Heston Extension
-
-Based on the professor's suggestion, the repository now includes a new project direction that combines:
-
-- a standard Heston variance process
-- a SABR/CEV-style asset process with `dS_t = sqrt(v_t) S_t^beta dW_t`
-
-The current implementation now has two layers:
-
-- **Option A (default)**: full-truncation Euler for the Heston variance path
-- **Option B backend (optional)**: a PyFENG-backed Heston variance / integrated-variance layer
-
-Option B should be treated as an **experimental branch of the project
-direction**. The default backend remains Euler, PyFENG is not required to
-import or run the main project, and the PyFENG path is meant as a research
-comparison rather than a settled replacement.
-
-The asset-side approximation remains in-project and currently uses:
-
-- a baseline Euler simulation for the beta-power asset process
-- a corrected Heston-specific conditional mean term
-- an exact conditional lognormal step when `beta = 1`
-- a prototype conditional CEV approximation fallback when `0 < beta < 1`
-
-For this prototype, we adapt the SABR-style conditional formula by identifying `sigma_t = sqrt(v_t)` and using the Heston-specific term
-
-- `A_step = (v_{t+h} - v_t - kappa theta h + kappa I_step) / xi`
-
-with `I_step ≈ ∫_t^{t+h} v_s ds`.
-
-When the optional dependency is installed, the project can also use PyFENG's
-`HestonMcChoiKwok2023PoisTd` class for the Heston variance backend. In that
-case we call `cond_states_step(dt, var_0)` step by step, interpret the returned
-average variance as `avgvar`, and set the step integrated variance to
-`I_step = avgvar * dt`.
-
-PyFENG is used only for the Heston variance / integrated-variance layer. The
-Beta-Heston asset layer remains custom so we can keep the SABR-style
-`S_t^beta` conditional approximation on top of either backend.
-
-Because `pyfeng` is GPL-licensed, this optional backend should also be treated
-carefully before any broader redistribution decision. In this repository it
-remains an explicitly optional experiment.
-
-The dedicated Beta-Heston experiments are:
-
-- `experiments/experiment_beta_heston_prototype.py`
-- `experiments/experiment_beta_heston_backend_comparison.py`
-
-They compare beta values `1.0`, `0.7`, and `0.5`, and save:
-
-- `results/tables/beta_heston_backend_comparison.csv`
-- `results/figures/beta_heston_backend_comparison.png`
-- `results/tables/beta_heston_prototype_comparison.csv`
-- `results/figures/beta_heston_prototype_comparison.png`
-
-Current limitations of the Beta-Heston extension:
-
-- the default project path still uses the simpler Euler backend for stability
-- only the `pyfeng_choi_kwok_td` variance backend is currently wired in
-- PyFENG is used only for the variance / integrated-variance layer, not the full asset transition
-- the PyFENG backend is experimental and is not the default execution path
-- GPL licensing considerations mean the PyFENG dependency should remain optional unless the distribution plan is revisited
-- the `beta < 1` CEV layer is a prototype approximation rather than a finished exact transition scheme
-- full exact CEV sampling and the more ambitious follow-up variants remain future work
-
-### Additional Experiment Coverage
-
-- `experiment_beta_heston_backend_comparison.py` compares the refined Beta-Heston conditional approximation under the default Euler variance backend and the optional PyFENG Poisson-conditioned variance backend, including average integrated variance diagnostics.
-- `experiment_beta_heston_prototype.py` is the first professor-suggested extension prototype, combining a simple Heston variance path with a SABR-style beta-power asset process and a corrected conditional approximation baseline.
-- `experiment_validation_bs_limit.py` isolates the `nu = 0` deterministic-volatility case and compares plain MC, conditional MC, and the exact Black-Scholes benchmark across several path counts.
-- `experiment_parameter_sweep_nu.py` varies the SABR vol-of-vol parameter `nu` over a fixed grid to test whether the conditional Monte Carlo variance-reduction advantage persists away from the baseline parameter set.
-
-## Results Summary
-
-All current benchmarks use the beta = 1 SABR setup
-
-- `S0 = 100`
-- `sigma0 = 0.2`
-- `K = 100`
-- `T = 1`
-- `r = 0.01`
-- `nu = 0.4`
-- `rho = -0.3`
-
-unless a validation case explicitly sets `nu = 0`.
-
-### Main Findings
-
-- Conditional Monte Carlo consistently reduces standard error relative to plain Monte Carlo.
-- In the variance benchmark, the variance reduction ratio stays around **42 to 46** across all tested path counts.
-- At the largest variance benchmark (`50,000` paths), plain MC has standard error **0.0591**, while conditional MC has standard error **0.00875**, with a variance reduction ratio of **45.53**.
-- In the timestep benchmark, the conditional estimator is much more stable across grid sizes than plain Monte Carlo.
-- The trapezoidal and Simpson integrated-variance approximations are already very close at moderate timestep counts and become nearly indistinguishable on fine grids.
-- In the runtime benchmark, conditional MC is not only lower variance but also slightly faster in the current implementation at large path counts, and it is dramatically better on the variance-times-runtime efficiency metric.
-
-### Variance Benchmark
-
-The most important variance result is that conditioning turns a high-variance payoff estimator into a much smoother pathwise pricing estimator.
-
-At `50,000` paths:
-
-- plain MC standard error: `0.059073`
-- conditional MC standard error: `0.008754`
-- variance reduction ratio: `45.534`
-
-![Standard error comparison](results/figures/variance_standard_errors_beta1_call.png)
-
-### Timestep Sensitivity
-
-The timestep experiment compares:
-
-- plain MC
-- conditional MC with trapezoidal integration
-- conditional MC with Simpson integration
-
-On the finest tested grid (`n_steps = 200`):
-
-- plain MC price: `8.469764`
-- conditional MC with trapezoidal integration: `8.488667`
-- conditional MC with Simpson integration: `8.488663`
-
-The trapezoidal versus Simpson price difference decreases from about `1.30e-3` at `10` steps to about `4.18e-6` at `200` steps, which suggests that the conditional estimator is not very sensitive to the integration rule once the grid is reasonably fine.
-
-![Timestep price comparison](results/figures/timestep_prices_beta1_call.png)
-
-### Runtime and Efficiency
-
-The runtime benchmark compares plain MC and conditional MC over the path grid
-
-- `2,000`
-- `5,000`
-- `10,000`
-- `20,000`
-- `50,000`
-
-At `50,000` paths:
-
-- plain MC runtime: `0.291913` seconds
-- conditional MC runtime: `0.181884` seconds
-- plain MC variance-times-runtime: `5.123278e+01`
-- conditional MC variance-times-runtime: `6.868466e-01`
-
-So in the current implementation, conditional MC is both slightly faster and far more statistically efficient.
-
-![Runtime efficiency benchmark](results/figures/runtime_efficiency_beta1_call.png)
-
-### Beta-Heston Option B Note
-
-The experimental backend comparison changes the Heston variance and
-integrated-variance simulation while keeping the custom Beta-Heston asset layer
-fixed. Because of that, the Euler-backend and PyFENG-backend prices do **not**
-need to match exactly.
-
-In the current backend comparison run:
-
-- `beta = 1.0` shows a noticeable difference between the Euler and PyFENG variance backends
-- `beta = 0.5` is very close across the two backends
-- the saved CSV also reports average integrated variance for each backend, which helps explain part of the pricing gap
-
-These results are useful diagnostics, but they should **not** yet be read as
-evidence that the PyFENG backend is uniformly better.
-
-## Validation
-
-The key validation case is the deterministic-volatility limit:
-
-- when `vol_of_vol = 0`
-- and `beta = 1`
-
-the model reduces to Black-Scholes with constant volatility `sigma0`.
-
-This is an important consistency check for both pricers:
-
-- in the conditional Monte Carlo implementation, the `nu = 0` branch reduces directly to the Black-Scholes call price
-- in the plain Monte Carlo implementation, the estimator should converge to the same Black-Scholes benchmark as the number of paths increases
-
-This gives a clean analytical sanity check for both the direct simulation and the conditional representation.
-
-The repository now includes a dedicated validation script for this case:
-
-- `experiments/experiment_validation_bs_limit.py`
-
-It is intended to produce:
-
-- `results/tables/validation_bs_limit_beta1_call.csv`
-- `results/figures/validation_bs_limit_prices_beta1_call.png`
-- `results/figures/validation_bs_limit_abs_error_beta1_call.png`
-
-In addition, the repository now includes a dedicated vol-of-vol sweep:
-
-- `experiments/experiment_parameter_sweep_nu.py`
-
-This script is intended to produce:
-
-- `results/tables/parameter_sweep_nu_beta1_call.csv`
-- `results/figures/parameter_sweep_nu_standard_errors_beta1_call.png`
-- `results/figures/parameter_sweep_nu_variance_ratio_beta1_call.png`
 
 ## Current Limitations
 
-- The main SABR implementation currently supports **beta = 1 only**.
-- The pricers currently support **European call options only**.
-- The Beta-Heston extension is currently a separate prototype rather than a full replacement for the SABR project.
-- The Beta-Heston extension now has an **optional experimental** PyFENG variance backend, but the default path still uses Euler.
-- The PyFENG path changes only the Heston variance / integrated-variance simulation; the `S_t^beta` asset layer remains custom.
-- The optional PyFENG dependency brings GPL licensing considerations and should be reviewed carefully before broader distribution.
-- The Beta-Heston `beta < 1` CEV layer currently uses a **prototype local fallback** rather than exact CEV sampling.
-- The repository does **not** yet implement the Hagan closed-form comparison experiment.
-- The current results are based on fixed benchmark grids rather than a full parameter sweep.
+- The main SABR implementation currently supports `beta = 1` only.
+- The main pricing layer currently supports European calls only.
+- The Beta-Heston extension is still a prototype rather than a finished second project.
+- The `beta < 1` CEV-style asset step is still approximate.
+- In this branch, the PyFENG backend is optional and experimental, not the default.
+- The PyFENG path changes only the variance / integrated-variance backend; the `S_t^beta` asset layer remains custom.
+- PyFENG also introduces GPL licensing considerations, so this optional backend should be treated carefully before broader distribution.
 
 ## References
-
-See the fuller project reference list in [report/references.md](report/references.md).
-
-Core references used in this repository include:
 
 - Hagan, P. S., Kumar, D., Lesniewski, A. S., and Woodward, D. E. (2002). *Managing Smile Risk*.
 - Black, F., and Scholes, M. (1973). *The Pricing of Options and Corporate Liabilities*.
 - Glasserman, P. (2003). *Monte Carlo Methods in Financial Engineering*.
-- Course materials from **MATH 5030 (Numerical Methods)**.
+- Choi, J., and Kwok, Y. K. (2023). *Simulation Schemes for the Heston Model with Poisson Conditioning*.
+- SABR-style `S_t^beta` conditional simulation ideas discussed in professor feedback and related SABR/CEV literature.
+- Course materials for **MATH 5030 (Numerical Methods)**.
