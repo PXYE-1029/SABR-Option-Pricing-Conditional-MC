@@ -44,49 +44,69 @@ $$
 
 with the left-endpoint volatility on each step. This preserves positivity of the simulated asset price.
 
-## Numerical Methods Implemented
+## Methodology
 
-### Plain Monte Carlo
+Our project studies a **SABR-style extension of the Heston model**.
 
-The plain Monte Carlo pricer simulates both volatility paths and asset-price paths, computes discounted call payoffs, and estimates the option value by a sample average.
+The variance process follows the Heston framework, while the asset process is modified by introducing a **beta-power term**. In this way, the model preserves the stochastic-variance structure of Heston while incorporating a CEV/SABR-style elasticity into the asset dynamics.
 
-### Conditional Monte Carlo
+### Model Setup
 
-For $\beta = 1$, we use the standard decomposition:
+The model is given by
 
-$$
-dW_t = \rho\, dZ_t + \sqrt{1 - \rho^2}\, dW_t^{\perp}
-$$
+\[
+dS_t = \mu S_t^\beta dt + \sqrt{v_t}\, S_t^\beta dW_t^S
+\]
 
-Conditioning on the volatility path gives:
+\[
+dv_t = \kappa(\theta - v_t)dt + \xi \sqrt{v_t}\, dW_t^v
+\]
 
-$$
-\begin{aligned}
-\log S_T &= \log S_0 + rT - \tfrac{1}{2} V_T + \frac{\rho}{\nu}\left(\sigma_T - \sigma_0\right) + \sqrt{(1-\rho^2)\, V_T}\, N \\
-V_T &= \int_0^T \sigma_t^2\, dt
-\end{aligned}
-$$
+\[
+dW_t^S dW_t^v = \rho\, dt
+\]
 
-This reduces each path to a conditional Black-Scholes call with:
+Here, \(v_t\) is the stochastic variance process, and the parameter \(\beta\) controls the nonlinear elasticity of the asset-price diffusion.
 
-- conditional spot: 
+A key quantity in the simulation is the **integrated variance**
 
-$$
-\begin{aligned}
-S_{\text{cond}} = S_0 \exp\!\left(\frac{\rho}{\nu}(\sigma_T - \sigma_0) - \tfrac{1}{2}\rho^2 V_T\right)
-\end{aligned}
-$$
+\[
+I_{0,t} = \int_0^t v_s\, ds
+\]
 
-- conditional volatility: 
+which summarizes the cumulative variance over the time interval \([0,t]\).
 
-$$
-\begin{aligned}
-\sigma_{\text{cond}} = \sqrt{\frac{(1-\rho^2)\, V_T}{T}}
-\end{aligned}
-$$
+### Simulation Framework
 
+To simulate this model efficiently, we separate the problem into two components:
 
-The conditional Monte Carlo estimator therefore replaces noisy payoff simulation with pathwise conditional prices, which substantially reduces variance.
+\[
+\text{Simulation} = \underbrace{\text{Variance step}}_{\{v_t,\ I_{0,t}\}} + \underbrace{\text{Conditional asset-price step}}_{\text{simulate } S_t \mid v_t,\ I_{0,t}}
+\]
+
+This decomposition is the core methodological idea of the project.
+
+### Variance Side
+
+On the variance side, we simulate both the variance process and the integrated variance. For this part, we rely on existing Heston simulation methods, especially implementations already available in **PyFENG**. This allows us to build on established variance simulation schemes rather than reconstructing the full variance module from scratch.
+
+### Conditional Asset-Price Side
+
+The main methodological focus of the project is on the asset-price simulation.
+
+Instead of using a naive step-by-step Euler simulation for the full asset path, we adopt a **conditional simulation** idea inspired by Professor Choi’s recent work. Once the variance-related quantities are available, we simulate the terminal asset price conditionally rather than propagating the full path through many small noisy steps.
+
+In particular, we use a **CEV-style conditional approximation** for the asset-price side. The purpose of this approximation is to preserve the key structural features of the model while improving simulation efficiency and numerical stability.
+
+### Overall Simulation Logic
+
+The full method can be summarized as follows:
+
+- First simulate the **variance process** and the **integrated variance**
+- Then simulate the **asset price conditionally** on those variance quantities
+- Replace naive full-path simulation with a more structured conditional approximation
+
+This design is intended to improve the **accuracy-efficiency tradeoff** of Monte Carlo pricing.
 
 ### Integrated Variance Approximation
 
