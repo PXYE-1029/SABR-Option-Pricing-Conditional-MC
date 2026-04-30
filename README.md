@@ -13,6 +13,8 @@ This repository studies numerical pricing of European call options under the SAB
 
 The main goal is to measure how much variance reduction and computational efficiency can be gained from conditioning on the volatility path. The repository includes reusable pricing modules, experiment scripts, saved benchmark tables, and figures suitable for a course project report.
 
+The repository now also includes a **Beta-Heston Extension** prototype, added after feedback from the course instructor. This new direction keeps the Heston variance process but replaces the usual geometric-BM asset base with a SABR/CEV-style `S_t^beta` asset process.
+
 ## SABR Model Setup
 
 We work with the SABR model:
@@ -117,6 +119,7 @@ Both operate on the same path convention used throughout the codebase:
 │   └── demo.ipynb
 ├── src/
 │   ├── __init__.py
+│   ├── beta_heston_simulation.py
 │   ├── black_scholes.py
 │   ├── conditional_mc.py
 │   ├── integration.py
@@ -125,6 +128,7 @@ Both operate on the same path convention used throughout the codebase:
 │   └── utils.py
 ├── experiments/
 │   ├── experiment_hagan_comparison.py
+│   ├── experiment_beta_heston_prototype.py
 │   ├── experiment_parameter_sweep_nu.py
 │   ├── experiment_runtime.py
 │   ├── experiment_timestep.py
@@ -136,6 +140,7 @@ Both operate on the same path convention used throughout the codebase:
 ├── report/
 │   └── references.md
 └── tests/
+    ├── test_beta_heston_simulation.py
     ├── test_black_scholes.py
     ├── test_conditional_mc.py
     └── test_integration.py
@@ -143,6 +148,7 @@ Both operate on the same path convention used throughout the codebase:
 
 Key saved outputs:
 
+- Beta-Heston prototype table: [results/tables/beta_heston_prototype_comparison.csv](results/tables/beta_heston_prototype_comparison.csv)
 - variance benchmark table: [results/tables/variance_comparison_beta1_call.csv](results/tables/variance_comparison_beta1_call.csv)
 - timestep benchmark table: [results/tables/timestep_sensitivity_beta1_call.csv](results/tables/timestep_sensitivity_beta1_call.csv)
 - runtime benchmark table: [results/tables/runtime_benchmark_beta1_call.csv](results/tables/runtime_benchmark_beta1_call.csv)
@@ -239,6 +245,12 @@ Run the variance comparison:
 python3 experiments/experiment_variance.py
 ```
 
+Run the Beta-Heston prototype experiment:
+
+```bash
+python3 experiments/experiment_beta_heston_prototype.py
+```
+
 Run the timestep sensitivity experiment:
 
 ```bash
@@ -284,9 +296,52 @@ Core public modules:
 - `src.integration`
   Provides `trapezoidal_rule`, `simpson_rule`,
   `trapezoidal_integrated_variance`, and `simpson_integrated_variance`.
+- `src.beta_heston_simulation`
+  Provides the separate Beta-Heston prototype layer, including
+  `BetaHestonParameters`, Heston variance-path simulation, baseline Euler asset
+  simulation, and the corrected conditional approximation layer.
+
+## Beta-Heston Extension
+
+Based on the professor's suggestion, the repository now includes a new project direction that combines:
+
+- a standard Heston variance process
+- a SABR/CEV-style asset process with `dS_t = sqrt(v_t) S_t^beta dW_t`
+
+The current implementation is **Option A only**. It uses:
+
+- simple full-truncation Euler simulation for the Heston variance path
+- a baseline Euler simulation for the beta-power asset process
+- a corrected Heston-specific conditional mean term
+- an exact conditional lognormal step when `beta = 1`
+- a prototype conditional CEV approximation fallback when `0 < beta < 1`
+
+For this prototype, we adapt the SABR-style conditional formula by identifying `sigma_t = sqrt(v_t)` and using the Heston-specific term
+
+- `A_step = (v_{t+h} - v_t - kappa theta h + kappa I_step) / xi`
+
+with `I_step ≈ ∫_t^{t+h} v_s ds` from a trapezoidal step rule.
+
+In the current environment, **PyFENG is not available**, so the `beta < 1` branch uses a clearly labeled local fallback rather than an exact CEV sampler.
+
+The dedicated prototype experiment is:
+
+- `experiments/experiment_beta_heston_prototype.py`
+
+It currently compares beta values `1.0`, `0.7`, and `0.5`, and saves:
+
+- `results/tables/beta_heston_prototype_comparison.csv`
+- `results/figures/beta_heston_prototype_comparison.png`
+
+Current limitations of the Beta-Heston extension:
+
+- it does **not** yet use a PyFENG / Poisson-conditioned Heston variance simulation
+- the `beta < 1` CEV layer is a prototype approximation rather than a finished exact transition scheme
+- the more ambitious follow-up direction ("Option B") remains future work
 
 ### Additional Experiment Coverage
 
+- `experiment_beta_heston_prototype.py` is the first professor-suggested extension prototype, combining a simple Heston variance path with a SABR-style beta-power asset process and a corrected conditional approximation baseline.
 - `experiment_validation_bs_limit.py` isolates the `nu = 0` deterministic-volatility case and compares plain MC, conditional MC, and the exact Black-Scholes benchmark across several path counts.
 - `experiment_parameter_sweep_nu.py` varies the SABR vol-of-vol parameter `nu` over a fixed grid to test whether the conditional Monte Carlo variance-reduction advantage persists away from the baseline parameter set.
 
@@ -402,8 +457,11 @@ This script is intended to produce:
 
 ## Current Limitations
 
-- The implementation currently supports **beta = 1 only**.
+- The main SABR implementation currently supports **beta = 1 only**.
 - The pricers currently support **European call options only**.
+- The Beta-Heston extension is currently a separate prototype rather than a full replacement for the SABR project.
+- The Beta-Heston prototype does **not** yet use PyFENG / Poisson-conditioned Heston variance simulation.
+- The Beta-Heston `beta < 1` CEV layer currently uses a **prototype local fallback** rather than exact CEV sampling.
 - The repository does **not** yet implement the Hagan closed-form comparison experiment.
 - The current results are based on fixed benchmark grids rather than a full parameter sweep.
 
