@@ -20,11 +20,13 @@ The original project topic was SABR `beta = 1` option pricing with conditional M
 
 The SABR model used in this project is
 
-```text
-dS_t = sigma_t S_t^beta dW_t
-d sigma_t = nu sigma_t dZ_t
-dW_t dZ_t = rho dt
-```
+$$
+\begin{aligned}
+dS_t &= \sigma_t S_t^\beta\, dW_t,\\
+d\sigma_t &= \nu \sigma_t\, dZ_t,\\
+dW_t\, dZ_t &= \rho\, dt.
+\end{aligned}
+$$
 
 The implemented SABR pricing layer is restricted to `beta = 1`, so the asset process becomes a lognormal stochastic-volatility model. The main inputs are:
 
@@ -44,9 +46,9 @@ The SABR portion of the project implements:
 
 For `beta = 1`, the conditional representation uses the integrated variance
 
-```text
-V_T = integral_0^T sigma_t^2 dt
-```
+$$
+V_T = \int_0^T \sigma_t^2\,dt.
+$$
 
 and turns the terminal pricing problem into a pathwise Black-Scholes call evaluation with much lower variance than direct payoff simulation.
 
@@ -68,11 +70,13 @@ Professor feedback suggested extending the Heston model by replacing the standar
 
 The model studied in this extension is
 
-```text
-dv_t = kappa (theta - v_t) dt + xi sqrt(v_t) dZ_t
-dS_t = r S_t dt + sqrt(v_t) S_t^beta dW_t
-dW_t dZ_t = rho dt
-```
+$$
+\begin{aligned}
+dv_t &= \kappa(\theta - v_t)\,dt + \xi\sqrt{v_t}\,dZ_t,\\
+dS_t &= rS_t\,dt + \sqrt{v_t}S_t^\beta\,dW_t,\\
+dW_t\,dZ_t &= \rho\,dt.
+\end{aligned}
+$$
 
 ### Current Beta-Heston Prototype
 
@@ -86,11 +90,17 @@ The current Beta-Heston implementation in this repository is a lightweight proto
 
 The key Heston-specific correction is
 
-```text
-A_step = (v_{t+h} - v_t - kappa theta h + kappa I_step) / xi
-```
+$$
+A_{\text{step}}
+=
+\frac{
+v_{t+h} - v_t - \kappa\theta h + \kappa I_{\text{step}}
+}{\xi},
+\qquad
+I_{\text{step}} \approx \int_t^{t+h} v_s\,ds.
+$$
 
-where `I_step` approximates `integral_t^{t+h} v_s ds`. This replaces directly copying the SABR volatility correction and instead uses the Heston variance identity appropriate for this model.
+This replaces directly copying the SABR volatility correction and instead uses the Heston variance identity appropriate for this model.
 
 This Beta-Heston layer is intentionally presented as a prototype rather than a finished pricing method.
 
