@@ -32,6 +32,9 @@ classifiers = [
 dev = [
   "pytest>=8.0",
 ]
+pyfeng = [
+  "pyfeng>=0.3.3",
+]
 
 [project.urls]
 Repository = "https://github.com/PXYE-1029/SABR-Option-Pricing-Conditional-MC"

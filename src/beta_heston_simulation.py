@@ -9,6 +9,7 @@ with ``dW_t dZ_t = rho dt``.
 
 Current scope:
 - full-truncation Euler simulation for the Heston variance path
+- an optional PyFENG Poisson-conditioned Heston variance backend
 - baseline Euler simulation for the beta-power asset process
 - a corrected Heston-specific conditional step
 - an exact conditional lognormal step when ``beta = 1``
@@ -16,12 +17,14 @@ Current scope:
 
 The ``beta < 1`` conditional branch is intentionally labeled as a prototype.
 It uses the correct Heston-specific correlated-variance term together with a
-local CEV fallback based on the Lamperti transform. No exact CEV sampler or
-PyFENG backend is available in this environment.
+local CEV fallback based on the Lamperti transform. The optional PyFENG
+backend is used only for the Heston variance / integrated-variance layer; the
+beta-power asset layer remains custom.
 """
 
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass
 from math import exp
 
@@ -29,12 +32,13 @@ import numpy as np
 
 from .integration import trapezoidal_rule
 from .sabr_simulation import generate_correlated_standard_normal_shocks
-from .utils import EuropeanOption, standard_error
+from .utils import EuropeanOption, get_rng, standard_error
 
 
 _XI_TOLERANCE = 1e-12
 _RHO_TOLERANCE = 1e-12
 _SAFE_POSITIVE_FLOOR = 1e-12
+_SUPPORTED_VARIANCE_BACKENDS = ("euler", "pyfeng_choi_kwok_td")
 
 
 @dataclass(frozen=True)
@@ -77,14 +81,24 @@ class BetaHestonVarianceSimulationResult:
     - shock arrays have shape ``(n_paths, n_steps)``
     - ``step_integrated_variance`` has shape ``(n_paths, n_steps)``
     - ``integrated_variance`` has shape ``(n_paths,)``
+
+    Notes
+    -----
+    ``price_shocks`` and ``variance_shocks`` are meaningful only for the Euler
+    variance backend. The conditional asset layer uses ``independent_shocks``
+    for the Brownian component orthogonal to the variance driver, so non-Euler
+    backends can still return a compatible object without exposing raw
+    correlated shock paths.
     """
 
     time_grid: np.ndarray
     variance_paths: np.ndarray
     price_shocks: np.ndarray
     variance_shocks: np.ndarray
+    independent_shocks: np.ndarray
     step_integrated_variance: np.ndarray
     integrated_variance: np.ndarray
+    variance_backend: str
 
     @property
     def dt(self) -> float:
@@ -121,7 +135,13 @@ def module_status() -> str:
 def beta_heston_conditional_backend() -> str:
     """Return the current conditional-CEV backend description."""
 
-    return "lamperti_fallback_without_pyfeng"
+    return "lamperti_fallback"
+
+
+def is_pyfeng_available() -> bool:
+    """Return whether the optional PyFENG dependency is installed."""
+
+    return importlib.util.find_spec("pyfeng") is not None
 
 
 def _validate_common_simulation_inputs(
@@ -139,6 +159,17 @@ def _validate_common_simulation_inputs(
         raise ValueError("n_paths must be positive")
 
 
+def _validate_variance_backend(variance_backend: str) -> None:
+    """Validate the selected variance backend."""
+
+    if variance_backend not in _SUPPORTED_VARIANCE_BACKENDS:
+        supported = ", ".join(_SUPPORTED_VARIANCE_BACKENDS)
+        raise ValueError(
+            f"Unsupported variance_backend '{variance_backend}'. "
+            f"Supported values are: {supported}."
+        )
+
+
 def _validate_european_call(option: EuropeanOption) -> None:
     """Restrict the prototype pricers to European calls for now."""
 
@@ -147,6 +178,43 @@ def _validate_european_call(option: EuropeanOption) -> None:
 
 
 def simulate_beta_heston_variance_paths(
+    parameters: BetaHestonParameters,
+    maturity: float,
+    n_steps: int,
+    n_paths: int,
+    seed: int | np.random.Generator | None = None,
+    variance_backend: str = "euler",
+) -> BetaHestonVarianceSimulationResult:
+    """Simulate Heston variance paths with the requested backend.
+
+    Supported backends are:
+    - ``"euler"``: full-truncation Euler for the variance process
+    - ``"pyfeng_choi_kwok_td"``: PyFENG's Poisson-conditioned time-discretized
+      Heston backend, used only for variance / integrated variance generation
+
+    The default remains ``"euler"`` so the project stays runnable even when
+    PyFENG is not installed.
+    """
+
+    _validate_variance_backend(variance_backend)
+    if variance_backend == "euler":
+        return _simulate_beta_heston_variance_paths_euler(
+            parameters=parameters,
+            maturity=maturity,
+            n_steps=n_steps,
+            n_paths=n_paths,
+            seed=seed,
+        )
+    return _simulate_beta_heston_variance_paths_pyfeng_choi_kwok_td(
+        parameters=parameters,
+        maturity=maturity,
+        n_steps=n_steps,
+        n_paths=n_paths,
+        seed=seed,
+    )
+
+
+def _simulate_beta_heston_variance_paths_euler(
     parameters: BetaHestonParameters,
     maturity: float,
     n_steps: int,
@@ -198,14 +266,128 @@ def simulate_beta_heston_variance_paths(
         trapezoidal_rule(variance_paths, dx=dt),
         dtype=float,
     )
+    independent_shocks = _compute_independent_price_shocks(
+        price_shocks=price_shocks,
+        variance_shocks=variance_shocks,
+        rho=parameters.rho,
+    )
 
     return BetaHestonVarianceSimulationResult(
         time_grid=time_grid,
         variance_paths=variance_paths,
         price_shocks=price_shocks,
         variance_shocks=variance_shocks,
+        independent_shocks=independent_shocks,
         step_integrated_variance=step_integrated_variance,
         integrated_variance=integrated_variance,
+        variance_backend="euler",
+    )
+
+
+def _simulate_beta_heston_variance_paths_pyfeng_choi_kwok_td(
+    parameters: BetaHestonParameters,
+    maturity: float,
+    n_steps: int,
+    n_paths: int,
+    seed: int | np.random.Generator | None = None,
+) -> BetaHestonVarianceSimulationResult:
+    """Simulate variance paths with PyFENG's Choi-Kwok POIS-TD backend.
+
+    This wrapper uses PyFENG only for the Heston variance / integrated-variance
+    layer. The beta-power asset layer stays in this project so we can reuse the
+    same conditional approximation logic on top.
+    """
+
+    _validate_common_simulation_inputs(maturity, n_steps, n_paths)
+
+    if parameters.xi <= _XI_TOLERANCE:
+        # When xi is numerically zero, the variance path is deterministic and
+        # the conditional asset layer already uses the clean no-division branch.
+        # We therefore reuse the deterministic Euler variance path while still
+        # returning the requested backend label and a fresh independent shock
+        # array for the orthogonal asset driver.
+        euler_result = _simulate_beta_heston_variance_paths_euler(
+            parameters=parameters,
+            maturity=maturity,
+            n_steps=n_steps,
+            n_paths=n_paths,
+            seed=seed,
+        )
+        generator = get_rng(seed)
+        independent_shocks = generator.standard_normal(size=(n_paths, n_steps))
+        zero_shocks = np.zeros((n_paths, n_steps), dtype=float)
+        return BetaHestonVarianceSimulationResult(
+            time_grid=euler_result.time_grid,
+            variance_paths=euler_result.variance_paths,
+            price_shocks=zero_shocks,
+            variance_shocks=zero_shocks.copy(),
+            independent_shocks=independent_shocks,
+            step_integrated_variance=euler_result.step_integrated_variance,
+            integrated_variance=euler_result.integrated_variance,
+            variance_backend="pyfeng_choi_kwok_td",
+        )
+
+    try:
+        import pyfeng as pf
+    except ImportError as exc:
+        raise ImportError(
+            "variance_backend='pyfeng_choi_kwok_td' requires the optional "
+            "PyFENG dependency. Install it with: python3 -m pip install -e "
+            "\".[pyfeng]\""
+        ) from exc
+
+    time_grid = np.linspace(0.0, maturity, n_steps + 1, dtype=float)
+    dt = maturity / n_steps
+    generator = get_rng(seed)
+
+    # PyFENG manages its own variance-driver random draws internally, so we
+    # sample only the Brownian shocks that drive the independent conditional
+    # beta-power asset layer.
+    pyfeng_seed = int(generator.integers(0, np.iinfo(np.uint32).max))
+    independent_shocks = generator.standard_normal(size=(n_paths, n_steps))
+
+    model = pf.HestonMcChoiKwok2023PoisTd(
+        sigma=parameters.v0,
+        vov=parameters.xi,
+        rho=parameters.rho,
+        mr=parameters.kappa,
+        theta=parameters.theta,
+        intr=parameters.risk_free_rate,
+        divr=0.0,
+        is_fwd=False,
+    )
+    model.set_num_params(
+        n_path=n_paths,
+        dt=dt,
+        rn_seed=pyfeng_seed,
+        antithetic=False,
+    )
+
+    variance_paths = np.empty((n_paths, n_steps + 1), dtype=float)
+    variance_paths[:, 0] = parameters.v0
+    step_integrated_variance = np.empty((n_paths, n_steps), dtype=float)
+
+    variance_current = variance_paths[:, 0].copy()
+    for step in range(n_steps):
+        variance_next, average_variance, _ = model.cond_states_step(dt, variance_current)
+        variance_next = np.maximum(np.asarray(variance_next, dtype=float), 0.0)
+        average_variance = np.maximum(np.asarray(average_variance, dtype=float), 0.0)
+        variance_paths[:, step + 1] = variance_next
+        step_integrated_variance[:, step] = average_variance * dt
+        variance_current = variance_next
+
+    integrated_variance = np.sum(step_integrated_variance, axis=1)
+    zero_shocks = np.zeros((n_paths, n_steps), dtype=float)
+
+    return BetaHestonVarianceSimulationResult(
+        time_grid=time_grid,
+        variance_paths=variance_paths,
+        price_shocks=zero_shocks,
+        variance_shocks=zero_shocks.copy(),
+        independent_shocks=independent_shocks,
+        step_integrated_variance=step_integrated_variance,
+        integrated_variance=integrated_variance,
+        variance_backend="pyfeng_choi_kwok_td",
     )
 
 
@@ -224,6 +406,12 @@ def simulate_beta_heston_asset_paths_euler(
     guaranteed for the Euler asset path itself, which is an important
     limitation of this baseline scheme.
     """
+
+    if variance_result.variance_backend != "euler":
+        raise NotImplementedError(
+            "The baseline Euler asset simulation currently requires "
+            "variance_backend='euler'."
+        )
 
     dt = variance_result.dt
     sqrt_dt = np.sqrt(dt)
@@ -249,18 +437,17 @@ def simulate_beta_heston_asset_paths_euler(
 
 
 def _compute_independent_price_shocks(
-    variance_result: BetaHestonVarianceSimulationResult,
+    price_shocks: np.ndarray,
+    variance_shocks: np.ndarray,
     rho: float,
 ) -> np.ndarray:
     """Recover the Brownian shocks orthogonal to the variance driver."""
 
     if abs(rho) >= 1.0 - _RHO_TOLERANCE:
-        return np.zeros_like(variance_result.price_shocks)
+        return np.zeros_like(price_shocks)
 
     rho_complement = np.sqrt(max(0.0, 1.0 - rho * rho))
-    return (
-        variance_result.price_shocks - rho * variance_result.variance_shocks
-    ) / rho_complement
+    return (price_shocks - rho * variance_shocks) / rho_complement
 
 
 def _compute_heston_conditional_step_terms(
@@ -291,7 +478,7 @@ def _compute_heston_conditional_step_terms(
         a_steps = np.zeros_like(step_integrated_variance)
         correlated_variance_steps = np.zeros_like(step_integrated_variance)
         independent_variance_steps = step_integrated_variance
-        independent_shocks = variance_result.price_shocks
+        independent_shocks = variance_result.independent_shocks
         return (
             a_steps,
             correlated_variance_steps,
@@ -315,10 +502,7 @@ def _compute_heston_conditional_step_terms(
         (1.0 - parameters.rho * parameters.rho) * step_integrated_variance,
         0.0,
     )
-    independent_shocks = _compute_independent_price_shocks(
-        variance_result,
-        parameters.rho,
-    )
+    independent_shocks = variance_result.independent_shocks
     return (
         a_steps,
         correlated_variance_steps,
@@ -506,8 +690,10 @@ def simulate_beta_heston_paths_euler(
         variance_paths=variance_result.variance_paths,
         price_shocks=variance_result.price_shocks,
         variance_shocks=variance_result.variance_shocks,
+        independent_shocks=variance_result.independent_shocks,
         step_integrated_variance=variance_result.step_integrated_variance,
         integrated_variance=variance_result.integrated_variance,
+        variance_backend=variance_result.variance_backend,
         asset_paths=asset_paths,
         method="euler",
     )
@@ -519,6 +705,7 @@ def simulate_beta_heston_paths_conditional_approximation(
     n_steps: int,
     n_paths: int,
     seed: int | np.random.Generator | None = None,
+    variance_backend: str = "euler",
 ) -> BetaHestonSimulationResult:
     """Simulate full Beta-Heston paths with the refined conditional prototype."""
 
@@ -528,6 +715,7 @@ def simulate_beta_heston_paths_conditional_approximation(
         n_steps=n_steps,
         n_paths=n_paths,
         seed=seed,
+        variance_backend=variance_backend,
     )
     asset_paths = simulate_beta_heston_asset_paths_conditional_approximation(
         parameters,
@@ -539,8 +727,10 @@ def simulate_beta_heston_paths_conditional_approximation(
         variance_paths=variance_result.variance_paths,
         price_shocks=variance_result.price_shocks,
         variance_shocks=variance_result.variance_shocks,
+        independent_shocks=variance_result.independent_shocks,
         step_integrated_variance=variance_result.step_integrated_variance,
         integrated_variance=variance_result.integrated_variance,
+        variance_backend=variance_result.variance_backend,
         asset_paths=asset_paths,
         method="conditional_approximation",
     )
@@ -615,6 +805,7 @@ def price_beta_heston_european_call_conditional_approximation(
     n_steps: int,
     n_paths: int,
     seed: int | np.random.Generator | None = None,
+    variance_backend: str = "euler",
 ) -> BetaHestonPricingResult:
     """Price a European call with the refined conditional Beta-Heston scheme."""
 
@@ -625,6 +816,7 @@ def price_beta_heston_european_call_conditional_approximation(
         n_steps=n_steps,
         n_paths=n_paths,
         seed=seed,
+        variance_backend=variance_backend,
     )
     discounted_payoffs = _discounted_call_payoffs(
         simulation.asset_paths[:, -1],

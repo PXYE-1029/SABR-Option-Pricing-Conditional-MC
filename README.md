@@ -128,6 +128,7 @@ Both operate on the same path convention used throughout the codebase:
 │   └── utils.py
 ├── experiments/
 │   ├── experiment_hagan_comparison.py
+│   ├── experiment_beta_heston_backend_comparison.py
 │   ├── experiment_beta_heston_prototype.py
 │   ├── experiment_parameter_sweep_nu.py
 │   ├── experiment_runtime.py
@@ -148,6 +149,7 @@ Both operate on the same path convention used throughout the codebase:
 
 Key saved outputs:
 
+- Beta-Heston backend comparison table: [results/tables/beta_heston_backend_comparison.csv](results/tables/beta_heston_backend_comparison.csv)
 - Beta-Heston prototype table: [results/tables/beta_heston_prototype_comparison.csv](results/tables/beta_heston_prototype_comparison.csv)
 - variance benchmark table: [results/tables/variance_comparison_beta1_call.csv](results/tables/variance_comparison_beta1_call.csv)
 - timestep benchmark table: [results/tables/timestep_sensitivity_beta1_call.csv](results/tables/timestep_sensitivity_beta1_call.csv)
@@ -173,6 +175,12 @@ Install in editable mode for development and testing:
 
 ```bash
 python3 -m pip install -e ".[dev]"
+```
+
+Install the optional PyFENG backend for the Beta-Heston extension:
+
+```bash
+python3 -m pip install -e ".[pyfeng]"
 ```
 
 Run the test suite:
@@ -251,6 +259,12 @@ Run the Beta-Heston prototype experiment:
 python3 experiments/experiment_beta_heston_prototype.py
 ```
 
+Run the optional Beta-Heston Euler-vs-PyFENG backend comparison:
+
+```bash
+python3 experiments/experiment_beta_heston_backend_comparison.py
+```
+
 Run the timestep sensitivity experiment:
 
 ```bash
@@ -298,8 +312,10 @@ Core public modules:
   `trapezoidal_integrated_variance`, and `simpson_integrated_variance`.
 - `src.beta_heston_simulation`
   Provides the separate Beta-Heston prototype layer, including
-  `BetaHestonParameters`, Heston variance-path simulation, baseline Euler asset
-  simulation, and the corrected conditional approximation layer.
+  `BetaHestonParameters`, Heston variance-path simulation with either the
+  default Euler backend or the optional `pyfeng_choi_kwok_td` backend,
+  baseline Euler asset simulation, and the prototype CEV conditional
+  approximation.
 
 ## Beta-Heston Extension
 
@@ -308,9 +324,18 @@ Based on the professor's suggestion, the repository now includes a new project d
 - a standard Heston variance process
 - a SABR/CEV-style asset process with `dS_t = sqrt(v_t) S_t^beta dW_t`
 
-The current implementation is **Option A only**. It uses:
+The current implementation now has two layers:
 
-- simple full-truncation Euler simulation for the Heston variance path
+- **Option A (default)**: full-truncation Euler for the Heston variance path
+- **Option B backend (optional)**: a PyFENG-backed Heston variance / integrated-variance layer
+
+Option B should be treated as an **experimental branch of the project
+direction**. The default backend remains Euler, PyFENG is not required to
+import or run the main project, and the PyFENG path is meant as a research
+comparison rather than a settled replacement.
+
+The asset-side approximation remains in-project and currently uses:
+
 - a baseline Euler simulation for the beta-power asset process
 - a corrected Heston-specific conditional mean term
 - an exact conditional lognormal step when `beta = 1`
@@ -320,27 +345,47 @@ For this prototype, we adapt the SABR-style conditional formula by identifying `
 
 - `A_step = (v_{t+h} - v_t - kappa theta h + kappa I_step) / xi`
 
-with `I_step ≈ ∫_t^{t+h} v_s ds` from a trapezoidal step rule.
+with `I_step ≈ ∫_t^{t+h} v_s ds`.
 
-In the current environment, **PyFENG is not available**, so the `beta < 1` branch uses a clearly labeled local fallback rather than an exact CEV sampler.
+When the optional dependency is installed, the project can also use PyFENG's
+`HestonMcChoiKwok2023PoisTd` class for the Heston variance backend. In that
+case we call `cond_states_step(dt, var_0)` step by step, interpret the returned
+average variance as `avgvar`, and set the step integrated variance to
+`I_step = avgvar * dt`.
 
-The dedicated prototype experiment is:
+PyFENG is used only for the Heston variance / integrated-variance layer. The
+Beta-Heston asset layer remains custom so we can keep the SABR-style
+`S_t^beta` conditional approximation on top of either backend.
+
+Because `pyfeng` is GPL-licensed, this optional backend should also be treated
+carefully before any broader redistribution decision. In this repository it
+remains an explicitly optional experiment.
+
+The dedicated Beta-Heston experiments are:
 
 - `experiments/experiment_beta_heston_prototype.py`
+- `experiments/experiment_beta_heston_backend_comparison.py`
 
-It currently compares beta values `1.0`, `0.7`, and `0.5`, and saves:
+They compare beta values `1.0`, `0.7`, and `0.5`, and save:
 
+- `results/tables/beta_heston_backend_comparison.csv`
+- `results/figures/beta_heston_backend_comparison.png`
 - `results/tables/beta_heston_prototype_comparison.csv`
 - `results/figures/beta_heston_prototype_comparison.png`
 
 Current limitations of the Beta-Heston extension:
 
-- it does **not** yet use a PyFENG / Poisson-conditioned Heston variance simulation
+- the default project path still uses the simpler Euler backend for stability
+- only the `pyfeng_choi_kwok_td` variance backend is currently wired in
+- PyFENG is used only for the variance / integrated-variance layer, not the full asset transition
+- the PyFENG backend is experimental and is not the default execution path
+- GPL licensing considerations mean the PyFENG dependency should remain optional unless the distribution plan is revisited
 - the `beta < 1` CEV layer is a prototype approximation rather than a finished exact transition scheme
-- the more ambitious follow-up direction ("Option B") remains future work
+- full exact CEV sampling and the more ambitious follow-up variants remain future work
 
 ### Additional Experiment Coverage
 
+- `experiment_beta_heston_backend_comparison.py` compares the refined Beta-Heston conditional approximation under the default Euler variance backend and the optional PyFENG Poisson-conditioned variance backend, including average integrated variance diagnostics.
 - `experiment_beta_heston_prototype.py` is the first professor-suggested extension prototype, combining a simple Heston variance path with a SABR-style beta-power asset process and a corrected conditional approximation baseline.
 - `experiment_validation_bs_limit.py` isolates the `nu = 0` deterministic-volatility case and compares plain MC, conditional MC, and the exact Black-Scholes benchmark across several path counts.
 - `experiment_parameter_sweep_nu.py` varies the SABR vol-of-vol parameter `nu` over a fixed grid to test whether the conditional Monte Carlo variance-reduction advantage persists away from the baseline parameter set.
@@ -419,6 +464,22 @@ So in the current implementation, conditional MC is both slightly faster and far
 
 ![Runtime efficiency benchmark](results/figures/runtime_efficiency_beta1_call.png)
 
+### Beta-Heston Option B Note
+
+The experimental backend comparison changes the Heston variance and
+integrated-variance simulation while keeping the custom Beta-Heston asset layer
+fixed. Because of that, the Euler-backend and PyFENG-backend prices do **not**
+need to match exactly.
+
+In the current backend comparison run:
+
+- `beta = 1.0` shows a noticeable difference between the Euler and PyFENG variance backends
+- `beta = 0.5` is very close across the two backends
+- the saved CSV also reports average integrated variance for each backend, which helps explain part of the pricing gap
+
+These results are useful diagnostics, but they should **not** yet be read as
+evidence that the PyFENG backend is uniformly better.
+
 ## Validation
 
 The key validation case is the deterministic-volatility limit:
@@ -460,7 +521,9 @@ This script is intended to produce:
 - The main SABR implementation currently supports **beta = 1 only**.
 - The pricers currently support **European call options only**.
 - The Beta-Heston extension is currently a separate prototype rather than a full replacement for the SABR project.
-- The Beta-Heston prototype does **not** yet use PyFENG / Poisson-conditioned Heston variance simulation.
+- The Beta-Heston extension now has an **optional experimental** PyFENG variance backend, but the default path still uses Euler.
+- The PyFENG path changes only the Heston variance / integrated-variance simulation; the `S_t^beta` asset layer remains custom.
+- The optional PyFENG dependency brings GPL licensing considerations and should be reviewed carefully before broader distribution.
 - The Beta-Heston `beta < 1` CEV layer currently uses a **prototype local fallback** rather than exact CEV sampling.
 - The repository does **not** yet implement the Hagan closed-form comparison experiment.
 - The current results are based on fixed benchmark grids rather than a full parameter sweep.

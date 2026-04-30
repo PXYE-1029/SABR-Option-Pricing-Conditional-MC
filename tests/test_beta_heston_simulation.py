@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
+from experiments.experiment_beta_heston_backend_comparison import (
+    run_experiment as run_backend_experiment,
+)
 from experiments.experiment_beta_heston_prototype import run_experiment
 from src.beta_heston_simulation import (
     BetaHestonParameters,
     _compute_heston_conditional_step_terms,
     _conditional_mean_anchor,
+    is_pyfeng_available,
     price_beta_heston_european_call_conditional_approximation,
     simulate_beta_heston_asset_paths_euler,
     simulate_beta_heston_variance_paths,
 )
 from src.black_scholes import black_scholes_call_price
 from src.utils import EuropeanOption
+
+
+PYFENG_AVAILABLE = is_pyfeng_available()
 
 
 def test_beta_heston_variance_paths_remain_nonnegative() -> None:
@@ -38,9 +46,39 @@ def test_beta_heston_variance_paths_remain_nonnegative() -> None:
         seed=123,
     )
 
+    assert result.variance_backend == "euler"
     assert np.all(result.variance_paths >= 0.0)
     assert np.all(result.step_integrated_variance >= 0.0)
     assert np.all(result.integrated_variance >= 0.0)
+    assert result.independent_shocks.shape == (128, 50)
+
+
+def test_pyfeng_backend_missing_dependency_raises_clear_error() -> None:
+    """The optional backend should fail clearly when PyFENG is not installed."""
+
+    if PYFENG_AVAILABLE:
+        pytest.skip("PyFENG is installed in this environment.")
+
+    parameters = BetaHestonParameters(
+        spot=100.0,
+        v0=0.04,
+        kappa=1.5,
+        theta=0.04,
+        xi=0.4,
+        beta=0.7,
+        rho=-0.5,
+        risk_free_rate=0.01,
+    )
+
+    with pytest.raises(ImportError, match="optional PyFENG dependency"):
+        simulate_beta_heston_variance_paths(
+            parameters=parameters,
+            maturity=1.0,
+            n_steps=10,
+            n_paths=32,
+            seed=123,
+            variance_backend="pyfeng_choi_kwok_td",
+        )
 
 
 def test_beta_one_euler_matches_linear_heston_like_update() -> None:
@@ -203,3 +241,130 @@ def test_beta_heston_prototype_experiment_runs_on_small_configuration(tmp_path) 
     assert figure_path.exists()
     assert all("euler_price" in row for row in rows)
     assert all("conditional_approximation_price" in row for row in rows)
+
+
+@pytest.mark.skipif(not PYFENG_AVAILABLE, reason="PyFENG is not installed.")
+def test_pyfeng_backend_shapes_match_euler_backend() -> None:
+    """PyFENG and Euler variance backends should share the same output shapes."""
+
+    parameters = BetaHestonParameters(
+        spot=100.0,
+        v0=0.04,
+        kappa=1.5,
+        theta=0.04,
+        xi=0.4,
+        beta=0.7,
+        rho=-0.5,
+        risk_free_rate=0.01,
+    )
+
+    euler_result = simulate_beta_heston_variance_paths(
+        parameters=parameters,
+        maturity=1.0,
+        n_steps=12,
+        n_paths=64,
+        seed=123,
+        variance_backend="euler",
+    )
+    pyfeng_result = simulate_beta_heston_variance_paths(
+        parameters=parameters,
+        maturity=1.0,
+        n_steps=12,
+        n_paths=64,
+        seed=123,
+        variance_backend="pyfeng_choi_kwok_td",
+    )
+
+    assert pyfeng_result.variance_backend == "pyfeng_choi_kwok_td"
+    assert pyfeng_result.variance_paths.shape == euler_result.variance_paths.shape
+    assert (
+        pyfeng_result.step_integrated_variance.shape
+        == euler_result.step_integrated_variance.shape
+    )
+    assert pyfeng_result.integrated_variance.shape == euler_result.integrated_variance.shape
+    assert pyfeng_result.independent_shocks.shape == euler_result.independent_shocks.shape
+    assert np.all(pyfeng_result.variance_paths >= 0.0)
+    assert np.all(pyfeng_result.step_integrated_variance >= 0.0)
+
+
+@pytest.mark.skipif(not PYFENG_AVAILABLE, reason="PyFENG is not installed.")
+def test_pyfeng_backend_conditional_pricer_runs() -> None:
+    """The PyFENG-backed conditional prototype should run on a small sample."""
+
+    parameters = BetaHestonParameters(
+        spot=100.0,
+        v0=0.04,
+        kappa=1.5,
+        theta=0.04,
+        xi=0.4,
+        beta=1.0,
+        rho=-0.5,
+        risk_free_rate=0.01,
+    )
+    option = EuropeanOption(strike=100.0, maturity=1.0, option_type="call")
+
+    result = price_beta_heston_european_call_conditional_approximation(
+        parameters=parameters,
+        option=option,
+        n_steps=12,
+        n_paths=128,
+        seed=123,
+        variance_backend="pyfeng_choi_kwok_td",
+    )
+
+    assert result.price > 0.0
+    assert result.standard_error >= 0.0
+    assert result.simulation.variance_backend == "pyfeng_choi_kwok_td"
+
+
+@pytest.mark.skipif(not PYFENG_AVAILABLE, reason="PyFENG is not installed.")
+def test_pyfeng_backend_handles_near_zero_xi_cleanly() -> None:
+    """Near-zero xi should not force the PyFENG wrapper through a singular path."""
+
+    parameters = BetaHestonParameters(
+        spot=100.0,
+        v0=0.04,
+        kappa=1.5,
+        theta=0.04,
+        xi=1e-14,
+        beta=1.0,
+        rho=-0.5,
+        risk_free_rate=0.01,
+    )
+    option = EuropeanOption(strike=100.0, maturity=1.0, option_type="call")
+
+    result = price_beta_heston_european_call_conditional_approximation(
+        parameters=parameters,
+        option=option,
+        n_steps=12,
+        n_paths=128,
+        seed=123,
+        variance_backend="pyfeng_choi_kwok_td",
+    )
+
+    assert result.price > 0.0
+    assert result.standard_error >= 0.0
+    assert result.simulation.variance_backend == "pyfeng_choi_kwok_td"
+
+
+@pytest.mark.skipif(not PYFENG_AVAILABLE, reason="PyFENG is not installed.")
+def test_backend_comparison_experiment_runs_on_small_configuration(tmp_path) -> None:
+    """The backend comparison experiment should run on a small grid."""
+
+    table_path = tmp_path / "beta_heston_backend_small.csv"
+    figure_path = tmp_path / "beta_heston_backend_small.png"
+    rows = run_backend_experiment(
+        beta_values=[1.0, 0.7],
+        n_steps=8,
+        n_paths=128,
+        table_path=table_path,
+        figure_path=figure_path,
+    )
+
+    assert len(rows) == 4
+    assert table_path.exists()
+    assert figure_path.exists()
+    assert any(row["backend"] == "euler" for row in rows)
+    assert any(row["backend"] == "pyfeng_choi_kwok_td" for row in rows)
+    assert all("average_integrated_variance" in row for row in rows)
+    assert all("price_difference_from_euler_backend" in row for row in rows)
