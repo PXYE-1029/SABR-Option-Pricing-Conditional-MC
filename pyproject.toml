@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sabr-option-pricing-conditional-mc"
-version = "0.1.0"
-description = "SABR beta=1 option pricing with plain Monte Carlo, conditional Monte Carlo, and benchmarking."
+version = "0.2.0"
+description = "Monte Carlo pricing under the SABR and CEV-Heston models, with martingale-preserving conditional simulation, exact CEV sampling, and Islah-baseline comparisons."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -16,6 +16,7 @@ dependencies = [
   "numpy>=1.24",
   "scipy>=1.11",
   "matplotlib>=3.7",
+  "pyfeng>=0.2.9",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -41,3 +42,4 @@ include = ["src*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
