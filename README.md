@@ -17,7 +17,6 @@ $$
 dF_t / F_t^{\beta} = \sqrt{v_t}\,dW^F_t,\qquad dv_t = \kappa(\theta - v_t)\,dt + \xi\sqrt{v_t}\,dW^v_t,\qquad \mathrm{corr}(dW^F, dW^v) = \rho.
 $$
 
-## Method
 
 ## Method
 
