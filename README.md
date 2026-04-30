@@ -54,35 +54,38 @@ The variance process follows the Heston framework, while the asset process is mo
 
 The model is given by
 
-\[
+$$
 dS_t = \mu S_t^\beta dt + \sqrt{v_t}\, S_t^\beta dW_t^S
-\]
+$$
 
-\[
+$$
 dv_t = \kappa(\theta - v_t)dt + \xi \sqrt{v_t}\, dW_t^v
-\]
+$$
 
-\[
+$$
 dW_t^S dW_t^v = \rho\, dt
-\]
+$$
 
-Here, \(v_t\) is the stochastic variance process, and the parameter \(\beta\) controls the nonlinear elasticity of the asset-price diffusion.
+Here, $v_t$ is the stochastic variance process, and the parameter $\beta$ controls the nonlinear elasticity of the asset-price diffusion.
 
 A key quantity in the simulation is the **integrated variance**
 
-\[
+$$
 I_{0,t} = \int_0^t v_s\, ds
-\]
+$$
 
-which summarizes the cumulative variance over the time interval \([0,t]\).
+which summarizes the cumulative variance over the time interval $[0,t]$.
 
 ### Simulation Framework
 
 To simulate this model efficiently, we separate the problem into two components:
 
-\[
-\text{Simulation} = \underbrace{\text{Variance step}}_{\{v_t,\ I_{0,t}\}} + \underbrace{\text{Conditional asset-price step}}_{\text{simulate } S_t \mid v_t,\ I_{0,t}}
-\]
+$$
+\text{Simulation} =
+\underbrace{\text{Variance step}}_{\{v_t,\ I_{0,t}\}}
++
+\underbrace{\text{Conditional asset-price step}}_{\text{simulate } S_t \mid v_t,\ I_{0,t}}
+$$
 
 This decomposition is the core methodological idea of the project.
 
