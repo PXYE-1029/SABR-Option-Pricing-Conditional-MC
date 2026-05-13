@@ -70,6 +70,53 @@ class EuropeanOption:
             raise ValueError("option_type must be 'call' or 'put'")
 
 
+@dataclass(frozen=True)
+class CEVHestonModelParameters:
+    """Parameters for the CEV-Heston hybrid model.
+
+    The forward price ``F_t`` and instantaneous variance ``v_t`` follow
+
+        dF_t / F_t^beta = sqrt(v_t) dW^F_t,
+        dv_t            = kappa (theta - v_t) dt + xi sqrt(v_t) dW^v_t,
+
+    with ``corr(dW^F, dW^v) = rho``. The boundary ``F = 0`` is absorbing
+    for ``0 < beta < 1``.
+    """
+
+    spot: float
+    initial_variance: float
+    kappa: float
+    theta: float
+    xi: float
+    correlation: float
+    beta: float = 1.0
+    risk_free_rate: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.spot <= 0.0:
+            raise ValueError("spot must be positive")
+        if self.initial_variance <= 0.0:
+            raise ValueError("initial_variance must be positive")
+        if self.kappa <= 0.0:
+            raise ValueError("kappa must be positive")
+        if self.theta <= 0.0:
+            raise ValueError("theta must be positive")
+        if self.xi < 0.0:
+            raise ValueError("xi (vol-of-vol) must be non-negative")
+        if not -1.0 <= self.correlation <= 1.0:
+            raise ValueError("correlation must lie in [-1, 1]")
+        if not 0.0 < self.beta <= 1.0:
+            raise ValueError("beta must lie in (0, 1]")
+
+    @property
+    def feller_ratio(self) -> float:
+        """``2 kappa theta / xi^2``; Feller holds iff this is at least one."""
+
+        if self.xi == 0.0:
+            return float("inf")
+        return 2.0 * self.kappa * self.theta / (self.xi * self.xi)
+
+
 def get_rng(seed: int | np.random.Generator | None = None) -> np.random.Generator:
     """Return a NumPy random number generator.
 
