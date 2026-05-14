@@ -111,7 +111,7 @@ class PyFengVarianceStepper:
         # variance) and vov = xi (the volatility of variance). The
         # mean-reversion speed and long-run variance map directly.
         self._model = ModelClass(
-            sigma=float(np.sqrt(parameters.initial_variance)),
+            sigma=float(parameters.initial_variance),
             vov=float(parameters.xi),
             mr=float(parameters.kappa),
             theta=float(parameters.theta),

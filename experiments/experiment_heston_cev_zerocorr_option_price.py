@@ -64,8 +64,8 @@ N_REPLICATIONS = 50         # paper uses 50
 N_STEPS_PER_YEAR = 1        # paper Fig 3 uses h = 1
 USE_BETA_LESS_THAN_ONE = True  # set False to use the beta = 1 Fourier benchmark
 
-TABLE_PATH = PROJECT_ROOT / "results" / "tables" / "heston_cev_option_price.csv"
-FIGURE_PATH = PROJECT_ROOT / "results" / "figures" / "heston_cev_option_price_error.png"
+TABLE_PATH = PROJECT_ROOT / "results" / "tables" / "heston_cev_option_zerocorr_price.csv"
+FIGURE_PATH = PROJECT_ROOT / "results" / "figures" / "heston_cev_option_zerocorr_price_error.png"
 
 
 def _ensure_output_dirs() -> None:
@@ -99,7 +99,7 @@ def _baseline_parameters() -> CEVHestonModelParameters:
         kappa=1.5,
         theta=0.09,
         xi=0.6,
-        correlation=-0.8,
+        correlation=0,
         beta=0.4 if USE_BETA_LESS_THAN_ONE else 1.0,
         risk_free_rate=0.0,
     )

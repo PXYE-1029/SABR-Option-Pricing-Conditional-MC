@@ -1,0 +1,206 @@
+Metadata-Version: 2.4
+Name: sabr-option-pricing-conditional-mc
+Version: 0.2.0
+Summary: Monte Carlo pricing under the SABR and CEV-Heston models, with martingale-preserving conditional simulation, exact CEV sampling, and Islah-baseline comparisons.
+Author: MATH 5030 Project Team
+License: MIT License
+        
+        Copyright (c) 2026
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+        
+Project-URL: Repository, https://github.com/PXYE-1029/SABR-Option-Pricing-Conditional-MC
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Education
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Mathematics
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.24
+Requires-Dist: scipy>=1.11
+Requires-Dist: matplotlib>=3.7
+Requires-Dist: pyfeng>=0.2.9
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Dynamic: license-file
+
+# SABR and CEV-Heston Option Pricing
+
+*Martingale-preserving Monte Carlo pricing of European options under SABR and CEV-Heston, built on Choi-Hu-Kwok (2024) and PyFENG. MATH 5030 final project.*
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PXYE-1029/SABR-Option-Pricing-Conditional-MC/blob/main/notebooks/demo.ipynb)
+
+## What this project does
+
+The project develops two Monte Carlo pricers for European options under stochastic volatility:
+
+- **Phase 1 — SABR (`beta = 1`).** Plain Monte Carlo and conditional Monte Carlo, demonstrating textbook variance reduction by conditioning on the volatility path.
+- **Phase 2 — CEV-Heston.** A hybrid model in which the asset has CEV elasticity `beta in (0, 1]` and the variance follows the Heston / CIR process. We port the Choi-Hu-Kwok (2024) three-step simulation framework to this setting. The Phase 2 simulator preserves the martingale property `E[F_T] = F_0` exactly, with no empirical martingale correction.
+
+CEV-Heston dynamics:
+
+$$
+dF_t / F_t^{\beta} = \sqrt{v_t}\,dW^F_t,\qquad dv_t = \kappa(\theta - v_t)\,dt + \xi\sqrt{v_t}\,dW^v_t,\qquad \mathrm{corr}(dW^F, dW^v) = \rho.
+$$
+
+## Method
+
+The Phase 2 simulator advances `(F_t, v_t)` over each step in three sub-steps:
+
+1. **Variance step.** `v_{t+h}` and the integrated variance `int v_s ds` over the step are sampled by PyFENG's `HestonMcChoiKwok2023PoisGe` (the Choi-Kwok 2024 Poisson-conditioning scheme). This is the published reference implementation for the CIR variance side and is consumed verbatim through a thin adapter.
+2. **Conditional mean.** Given the sampled `(v_{t+h}, int v ds)`, the forward-price conditional mean is computed in closed form. The key identity is the CIR Ito formula
+
+$$
+\int_t^{t+h}\sqrt{v_s}\,dW^v_s \;=\; \frac{ v_{t+h} - v_t - \kappa\theta h + \kappa \int v_s\,ds }{\xi},
+$$
+
+   which gives the SABR-side stochastic integral entirely from already-sampled quantities -- no extra random draws are needed for Step 2. This is the single point where the Heston port is structurally cleaner than the original SABR scheme.
+3. **Exact CEV sampling.** `F_{t+h}` is drawn from a CEV distribution via the shifted-Poisson-mixture-Gamma representation of Makarov-Glew (2010) and Kang (2014). Three elementary random variates per step (Gamma, Poisson, Gamma); no inverse-CDF root finding.
+
+For comparison we also implement Islah's (2009) approximation, which has been the de facto baseline in nearly every SABR / CEV-Heston simulator since 2009. Islah's scheme uses a modified CEV degree of freedom that breaks the martingale property; we follow Choi et al. (2024, Appendix B) to sample it through the same exact CEV sampler, so the comparison is on equal footing in sampling quality.
+
+The degenerate `xi = 0` case (deterministic mean-reverting variance) is handled by a small bundled Andersen QE stepper, since PyFENG's class divides by `xi^2` in its constructor and cannot be instantiated at `xi = 0`.
+
+Full mathematical derivations and parameter conventions are documented in the `src/` module docstrings.
+
+## Repository structure
+
+```text
+src/
+  utils.py                        # parameter dataclasses & helpers
+  black_scholes.py / sabr_simulation.py / mc_pricer.py / conditional_mc.py / integration.py
+                                  # Phase 1 SABR (beta = 1)
+  cev_sampling.py                 # Phase 2: exact CEV sampler (paper Algorithm 3)
+  pyfeng_adapter.py               # Phase 2: PyFENG variance stepper
+  cir_simulation.py               # Phase 2: Andersen QE for the xi = 0 case
+  heston_cev_simulation.py        # Phase 2: main CEV-Heston simulator (paper Algorithm 4 ported)
+  islah_approximation.py          # Phase 2: Islah baseline (paper Appendix B)
+  heston_cev_benchmark.py         # Phase 2: PyFENG HestonFft / self-reference benchmarks
+experiments/                      # 9 runnable experiment scripts
+results/{tables,figures}/         # CSV tables and PNG figures produced by experiments
+tests/                            # 32 unit tests
+```
+
+## Installation
+
+```bash
+git clone https://github.com/PXYE-1029/SABR-Option-Pricing-Conditional-MC.git
+cd SABR-Option-Pricing-Conditional-MC
+python3 -m pip install -e ".[dev]"
+python3 -m pytest tests/ -v
+```
+
+Runtime dependencies: `numpy`, `scipy`, `matplotlib`, `pyfeng`.
+
+## Quick start
+
+### Phase 1: SABR
+
+```python
+from src.utils import SABRModelParameters, EuropeanOption
+from src.conditional_mc import price_european_option_conditional_mc
+
+params = SABRModelParameters(
+    spot=100.0, initial_volatility=0.2, beta=1.0,
+    vol_of_vol=0.4, correlation=-0.3, risk_free_rate=0.01,
+)
+option = EuropeanOption(strike=100.0, maturity=1.0, option_type="call")
+result = price_european_option_conditional_mc(params, option, n_steps=50, n_paths=5000, seed=123)
+print(f"{result.price:.4f} +/- {result.standard_error:.4f}")
+```
+
+### Phase 2: CEV-Heston
+
+```python
+from src.utils import CEVHestonModelParameters, EuropeanOption
+from src.heston_cev_simulation import price_european_option_heston_cev
+
+params = CEVHestonModelParameters(
+    spot=100.0, initial_variance=0.04, kappa=1.5, theta=0.04,
+    xi=0.4, correlation=-0.5, beta=0.5, risk_free_rate=0.0,
+)
+option = EuropeanOption(strike=100.0, maturity=1.0, option_type="call")
+result = price_european_option_heston_cev(params, option, n_steps=20, n_paths=50_000, seed=2026)
+print(f"{result.price:.4f} +/- {result.standard_error:.4f}")
+print(f"Variance backend: {result.simulation.diagnostics['variance_backend']}")
+```
+
+## Running the experiments
+
+```bash
+# Phase 1
+python3 experiments/experiment_variance.py
+python3 experiments/experiment_runtime.py
+python3 experiments/experiment_timestep.py
+python3 experiments/experiment_validation_bs_limit.py
+python3 experiments/experiment_parameter_sweep_nu.py
+
+# Phase 2
+python3 experiments/experiment_heston_cev_martingale.py        # martingale preservation
+python3 experiments/experiment_heston_cev_option_price.py      # option price vs benchmark
+python3 experiments/experiment_heston_cev_speed.py             # speed-vs-RMS trade-off
+```
+
+Each script saves a CSV under `results/tables/` and PNGs under `results/figures/`.
+
+## Headline results
+
+### Phase 1 (SABR `beta = 1`)
+
+Conditional MC reduces variance by **42-46x** versus plain MC across all tested path counts, while running slightly faster at large `N`. At `N = 50,000`, plain-MC standard error is `0.059` and conditional-MC standard error is `0.009`.
+
+![Standard error: plain MC vs conditional MC across path counts](results/figures/variance_standard_errors_beta1_call.png)
+
+### Phase 2 (CEV-Heston)
+
+**Martingale preservation.** At `T = 10` the raw simulator (no EMC) gives `|E[F_T] - F_0| = 0.029`, about one Monte Carlo standard error. The forward-error curve stays inside the analytic `+/- 2 SE` band across all maturities `T = 1, ..., 10`, with no systematic drift. This reproduces Choi-Hu-Kwok (2024) Figure 3a in the Heston-CEV setting.
+
+![Forward-price error vs maturity, inside the +/- 2 SE Monte Carlo band](results/figures/heston_cev_martingale_error.png)
+
+**Option price accuracy.** Across `T = 1, ..., 10`, the ATM call price tracks a high-resolution self-reference benchmark within Monte Carlo noise. The Islah baseline is shown for direct comparison.
+
+![ATM call pricing error vs maturity: ours vs Islah baseline](results/figures/heston_cev_option_price_error.png)
+
+**Speed-vs-RMS trade-off.** Sweeping `N` and `dt` jointly at `T = 4`, the project's CEV scheme dominates Islah at fixed work as the grid is refined: Islah's RMS plateaus where its frozen-coefficient bias does not vanish, while ours continues to track Monte Carlo noise downward.
+
+![RMS error vs CPU time: ours vs Islah vs truncated Euler baseline](results/figures/heston_cev_speed_rms_tradeoff.png)
+
+The test suite covers the core algorithms (8 martingale-preservation tests across four parameter regimes, 11 CEV-sampler tests against the noncentral chi-squared and incomplete-Gamma closed forms) plus 13 supporting tests for the integration and adapter layers, totalling 32 tests, all passing on Python 3.10 / 3.11 / 3.12.
+
+## Limitations
+
+European calls and puts only; American and path-dependent payoffs are out of scope. The Phase 2 advantage over Islah is most pronounced at aggressive parameters (large `xi`, strongly negative `rho`, long `T`), and the benchmark figures above use moderate parameters where both schemes operate comfortably within their stable regimes.
+
+## References
+
+The most central works are:
+
+- Hagan et al. (2002) — original SABR specification
+- **Choi, Hu, Kwok (2024)** — the SABR simulation paper this project ports to CEV-Heston
+- **Choi, Kwok (2024)** — the Heston Poisson-conditioning scheme used via PyFENG
+- Islah (2009) — the classical baseline our scheme corrects
+- Makarov-Glew (2010), Kang (2014) — exact CEV sampling
+- Andersen (2008) — QE scheme for the `xi = 0` case
+- Glasserman (2003), Black-Scholes (1973) — standard background
+- MATH 5030 (Numerical Methods) course materials

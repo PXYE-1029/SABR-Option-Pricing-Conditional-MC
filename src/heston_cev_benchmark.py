@@ -91,7 +91,7 @@ def heston_fourier_benchmark_beta_one(
         ) from err
 
     fft_model = pf.HestonFft(
-        sigma=float(np.sqrt(parameters.initial_variance)),
+        sigma=float(parameters.initial_variance),
         vov=float(parameters.xi),
         mr=float(parameters.kappa),
         theta=float(parameters.theta),
