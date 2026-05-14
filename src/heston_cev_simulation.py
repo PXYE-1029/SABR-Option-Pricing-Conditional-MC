@@ -1,4 +1,4 @@
-"""Step-by-step exact simulation of the CEV-Heston model.
+"""Step-by-step conditional simulation of the CEV-Heston model.
 
 This module ports the two-step Choi-Hu-Kwok (2024) simulation framework
 for the SABR model to the CEV-Heston (a.k.a. beta-Heston) hybrid:
@@ -12,7 +12,7 @@ over each step ``[t, t + h]`` in three sub-steps:
 
   Step 1.  Sample ``v_{t+h}`` and the integrated variance
            ``IV_t^h := int_t^{t+h} v_s ds`` from the CIR variance
-           process. The recommended production path is to delegate to
+           process. The recommended PyFENG-backed path is to delegate to
            PyFENG's peer-reviewed implementation of the Choi-Kwok
            (2024) Poisson-conditioning scheme via
            ``src.pyfeng_adapter.PyFengVarianceStepper``. When PyFENG
@@ -76,7 +76,7 @@ stochastic volatility model. Journal of Computational Finance.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -94,6 +94,8 @@ __all__ = [
 
 
 DEFAULT_EPSILON_CLAMP = 1.0e-8
+
+ConditionalAnchorScheme = Literal["frozen_left", "power_projected"]
 
 
 class VarianceStepper(Protocol):
@@ -164,7 +166,7 @@ def _build_default_variance_stepper(
 ) -> tuple[VarianceStepper, str]:
     """Return the default variance stepper.
 
-    Tries PyFENG first (the recommended production path that uses the
+    Tries PyFENG first (the recommended PyFENG-backed path that uses the
     peer-reviewed Choi-Kwok 2024 Poisson-conditioning implementation),
     and falls back to the bundled Andersen QE stepper if PyFENG is
     not importable, or if the requested parameter regime cannot be
@@ -252,11 +254,138 @@ def _conditional_mean_correlated(
     return F_t * np.exp(drift + convexity), n_clamped
 
 
+def _conditional_mean_power_projected(
+    F_t: np.ndarray,
+    v_t: np.ndarray,
+    v_next: np.ndarray,
+    integrated_variance: np.ndarray,
+    parameters: CEVHestonModelParameters,
+    dt: float,
+    epsilon_clamp: float,
+) -> tuple[np.ndarray, int]:
+    r"""Compute a CEV-transform predictor with martingale projection.
+
+    The paper's Eq. (13) freezes ``F^{1-beta}``` in the log equation
+    for the correlated operator. For ``beta < 1`` a natural companion
+    approximation is to work in the CEV power coordinate
+    ``Y = F^{1-beta}``. Ito's formula gives, for the correlated
+    operator alone,
+
+        dY = beta_* rho sqrt(v) dW^v
+             - 0.5 beta_* beta rho^2 v / Y dt,
+
+    where ``beta_* = 1 - beta``. Freezing only the denominator in the
+    Ito correction over one step gives the predictor
+
+        Y_{t+h} ~= Y_t + beta_* rho A
+                  - 0.5 beta_* beta rho^2 I / Y_t,
+
+    with ``A = int sqrt(v)dW^v`` from the CIR identity and
+    ``I = int v ds``. The predictor is then mapped back to the price
+    coordinate and projected so its cross-sectional mean equals the
+    incoming active-path mean. This keeps the step martingale-centered
+    while using a beta-aware correlated shift instead of the purely
+    log-frozen shift.
+
+    The projection is deliberately local to one time step and only used
+    by the opt-in ``power_projected`` scheme. The original Eq. (13)
+    anchor remains available as ``frozen_left``.
+    """
+
+    rho = parameters.correlation
+    xi = parameters.xi
+    beta = parameters.beta
+    beta_star = 1.0 - beta
+
+    if beta_star <= 0.0:
+        return _conditional_mean_correlated(
+            F_t=F_t,
+            v_t=v_t,
+            v_next=v_next,
+            integrated_variance=integrated_variance,
+            parameters=parameters,
+            dt=dt,
+            epsilon_clamp=epsilon_clamp,
+        )
+
+    if xi == 0.0:
+        sqrt_v_integral = np.zeros_like(F_t)
+    else:
+        sqrt_v_integral = (
+            v_next - v_t - parameters.kappa * parameters.theta * dt
+            + parameters.kappa * integrated_variance
+        ) / xi
+
+    F_for_denom = np.maximum(F_t, epsilon_clamp)
+    n_clamped = int(np.sum(F_t < epsilon_clamp))
+    y_t = F_for_denom ** beta_star
+    y_next = (
+        y_t
+        + beta_star * rho * sqrt_v_integral
+        - 0.5 * beta_star * beta * rho * rho * integrated_variance / np.maximum(y_t, 1e-300)
+    )
+    raw_anchor = np.maximum(y_next, 0.0) ** (1.0 / beta_star)
+
+    raw_mean = float(np.mean(raw_anchor)) if raw_anchor.size else 0.0
+    target_mean = float(np.mean(F_t)) if F_t.size else 0.0
+    if raw_mean <= 0.0 or not np.isfinite(raw_mean):
+        # Fall back to the paper anchor in the pathological case where
+        # every transformed predictor has hit the absorbing boundary.
+        return _conditional_mean_correlated(
+            F_t=F_t,
+            v_t=v_t,
+            v_next=v_next,
+            integrated_variance=integrated_variance,
+            parameters=parameters,
+            dt=dt,
+            epsilon_clamp=epsilon_clamp,
+        )
+
+    anchor = raw_anchor * (target_mean / raw_mean)
+    return anchor, n_clamped
+
+
+def _conditional_mean_for_scheme(
+    F_t: np.ndarray,
+    v_t: np.ndarray,
+    v_next: np.ndarray,
+    integrated_variance: np.ndarray,
+    parameters: CEVHestonModelParameters,
+    dt: float,
+    epsilon_clamp: float,
+    conditional_scheme: ConditionalAnchorScheme,
+) -> tuple[np.ndarray, int]:
+    if conditional_scheme == "frozen_left":
+        return _conditional_mean_correlated(
+            F_t=F_t,
+            v_t=v_t,
+            v_next=v_next,
+            integrated_variance=integrated_variance,
+            parameters=parameters,
+            dt=dt,
+            epsilon_clamp=epsilon_clamp,
+        )
+    if conditional_scheme == "power_projected":
+        return _conditional_mean_power_projected(
+            F_t=F_t,
+            v_t=v_t,
+            v_next=v_next,
+            integrated_variance=integrated_variance,
+            parameters=parameters,
+            dt=dt,
+            epsilon_clamp=epsilon_clamp,
+        )
+    raise ValueError(
+        "conditional_scheme must be one of 'frozen_left' or 'power_projected'"
+    )
+
+
 def _sample_next_price(
     F_bar: np.ndarray,
     integrated_variance: np.ndarray,
     parameters: CEVHestonModelParameters,
     rng: np.random.Generator,
+    residual_variance_scale: float | None = None,
 ) -> np.ndarray:
     r"""Sample ``F_{t+h}`` given ``F-bar_t^h`` and ``IV_t^h``.
 
@@ -267,7 +396,15 @@ def _sample_next_price(
     are handled implicitly by the standard CEV / lognormal samplers.
     """
 
-    rho_perp_squared = 1.0 - parameters.correlation ** 2
+    if residual_variance_scale is None:
+        # If xi = 0, variance is deterministic and conditioning on the
+        # variance path reveals no component of the asset Brownian
+        # motion. Correlation is then distributionally irrelevant and
+        # the full integrated variance must remain in the CEV step.
+        residual_variance_scale = (
+            1.0 if parameters.xi == 0.0 else 1.0 - parameters.correlation ** 2
+        )
+    rho_perp_squared = float(residual_variance_scale)
     effective_variance = rho_perp_squared * integrated_variance
 
     if parameters.beta == 1.0:
@@ -295,6 +432,7 @@ def simulate_heston_cev_terminal(
     seed: int | np.random.Generator | None = None,
     variance_stepper: VarianceStepper | None = None,
     epsilon_clamp: float = DEFAULT_EPSILON_CLAMP,
+    conditional_scheme: ConditionalAnchorScheme = "frozen_left",
 ) -> HestonCEVSimulationResult:
     """Simulate ``F_T`` under the CEV-Heston model.
 
@@ -324,6 +462,11 @@ def simulate_heston_cev_terminal(
         Lower bound on ``F_t`` used inside the frozen-coefficient
         denominator. Default ``1e-8``. The simulator records the
         per-step clamp trigger rate as a diagnostic.
+    conditional_scheme:
+        Correlated-asset anchor used when ``rho != 0`` and ``xi > 0``.
+        ``"frozen_left"`` is the direct Choi-Hu-Kwok Eq. (13)/(16b)
+        adaptation. ``"power_projected"`` uses a CEV-power-coordinate
+        predictor with a local martingale projection.
 
     Returns
     -------
@@ -341,6 +484,10 @@ def simulate_heston_cev_terminal(
         raise ValueError("n_paths must be positive")
     if epsilon_clamp <= 0.0:
         raise ValueError("epsilon_clamp must be positive")
+    if conditional_scheme not in ("frozen_left", "power_projected"):
+        raise ValueError(
+            "conditional_scheme must be one of 'frozen_left' or 'power_projected'"
+        )
 
     rng = get_rng(seed)
     seed_for_pyfeng = seed if isinstance(seed, int) else None
@@ -391,12 +538,13 @@ def simulate_heston_cev_terminal(
         iv_active = integrated_variance[active]
 
         # Step 2: compute the conditional mean.
-        if parameters.correlation == 0.0:
-            # Uncorrelated: drift and convexity vanish; conditional law is exact CEV.
+        if parameters.correlation == 0.0 or parameters.xi == 0.0:
+            # Uncorrelated, or deterministic variance: the conditioned
+            # variance path reveals no correlated Brownian integral.
             F_bar_active = F_active
             n_clamped_step = 0
         else:
-            F_bar_active, n_clamped_step = _conditional_mean_correlated(
+            F_bar_active, n_clamped_step = _conditional_mean_for_scheme(
                 F_t=F_active,
                 v_t=v_active,
                 v_next=v_next_active,
@@ -404,15 +552,20 @@ def simulate_heston_cev_terminal(
                 parameters=parameters,
                 dt=dt,
                 epsilon_clamp=epsilon_clamp,
+                conditional_scheme=conditional_scheme,
             )
         n_clamp_total += n_clamped_step
 
         # Step 3: sample F_{t+h} from the (effective) CEV distribution.
+        residual_variance_scale = (
+            1.0 if parameters.xi == 0.0 else 1.0 - parameters.correlation ** 2
+        )
         F_next_active = _sample_next_price(
             F_bar=F_bar_active,
             integrated_variance=iv_active,
             parameters=parameters,
             rng=rng,
+            residual_variance_scale=residual_variance_scale,
         )
 
         F[active] = F_next_active
@@ -428,6 +581,7 @@ def simulate_heston_cev_terminal(
         "n_clamp_triggered": n_clamp_total,
         "n_active_total": n_active_total,
         "variance_backend": backend_name,
+        "conditional_scheme": conditional_scheme,
     }
 
     return HestonCEVSimulationResult(
@@ -447,6 +601,7 @@ def price_european_option_heston_cev(
     seed: int | np.random.Generator | None = None,
     variance_stepper: VarianceStepper | None = None,
     epsilon_clamp: float = DEFAULT_EPSILON_CLAMP,
+    conditional_scheme: ConditionalAnchorScheme = "frozen_left",
 ) -> HestonCEVPricingResult:
     """Price a European option under CEV-Heston by Monte Carlo.
 
@@ -467,6 +622,7 @@ def price_european_option_heston_cev(
         seed=seed,
         variance_stepper=variance_stepper,
         epsilon_clamp=epsilon_clamp,
+        conditional_scheme=conditional_scheme,
     )
 
     terminal = simulation.terminal_prices

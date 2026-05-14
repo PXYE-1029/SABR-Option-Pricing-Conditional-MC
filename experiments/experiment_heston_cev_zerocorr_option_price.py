@@ -18,11 +18,10 @@ Following Choi-Hu-Kwok (2024, Sec. 5), each maturity is run
   * Per-scheme SEM  = stdev across runs / sqrt(m).
   * Error bars in the figure are +/- 2 SEMs.
 
-The headline observation, reproducing Choi-Hu-Kwok (2024) Fig 3b in
-the Heston-CEV setting, is that Islah's pricing error grows roughly
-linearly in ``T`` (because the underlying martingale violation
-accumulates), while the project's CEV approximation tracks the
-benchmark to within Monte Carlo noise across all maturities.
+This zero-correlation variant is a diagnostic: when rho = 0, the
+correlated frozen-coefficient term disappears and the conditional CEV
+step should be much cleaner. For beta < 1 the benchmark is still a
+self-reference Monte Carlo benchmark rather than a closed-form truth.
 """
 
 from __future__ import annotations

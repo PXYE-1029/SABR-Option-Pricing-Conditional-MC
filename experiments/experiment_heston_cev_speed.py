@@ -1,56 +1,19 @@
-"""Speed-vs-accuracy trade-off for CEV-Heston pricing (paper Fig 2 analogue, v3).
+"""Preliminary speed-vs-accuracy trade-off for CEV-Heston pricing.
 
-Plots root-mean-square error against CPU time for two schemes:
+Plots root-mean-square error against CPU time for four schemes:
 
-  * The project's CEV-approximation simulator -- the proposed method.
+  * The original frozen-left CEV anchor.
+  * The beta-aware power-projected CEV anchor.
+  * Islah's approximation.
   * A naive asset-side truncated-Euler baseline.
 
-This is the analogue of Choi-Hu-Kwok (2024) Fig 2 in the Heston-CEV
-setting. The figure shows two curves on a log-log RMS-vs-time plane;
-the proposed scheme should sit below and to the left of the Euler
-baseline across the whole range -- "ours is faster at any target RMS,
-and more accurate at any target CPU budget."
+This is a diagnostic, not a strict ranking. All methods are measured
+against the same high-resolution self-reference benchmark.
 
 DESIGN DETAILS
 
-Each scheme sweeps its own most-informative axis:
-
-  - Ours: per-step cost is high (Gamma + Poisson + truncated
-    Gaussian sampling for variance, plus exact CEV sampling for
-    the asset). With sufficient h, error is dominated by Monte
-    Carlo variance. Sweet spot: fix a moderately fine h, sweep N.
-
-  - Euler: per-step cost is low (two normal draws), but error is
-    dominated by time-discretization bias. Sweet spot: fix a
-    middling N, sweep n_steps.
-
-PARAMETERS DELIBERATELY DIFFER FROM THE OTHER EXPERIMENTS
-
-The other CEV-Heston experiments (martingale, option_price,
-h_convergence) use Case-V-style parameters (F_0=1, rho=-0.8,
-beta=0.4). Those parameters are *bad* for a speed-vs-RMS
-comparison, because in that regime ours has a non-trivial
-frozen-coefficient bias floor at moderate h that obscures the
-work-vs-error trend.
-
-For Fig 2 we follow Choi-Hu-Kwok's own choice and use a milder
-parameter set with two specific changes:
-  - Lower F_0 (0.5 instead of 1.0). This brings the asset closer
-    to the absorbing boundary, which is where Euler's bias floor
-    comes from. Without this, Euler's RMS just keeps decreasing
-    with h, and the work-vs-error comparison no longer demonstrates
-    the qualitative advantage of exact CEV sampling.
-  - Mild correlation (rho=-0.3 instead of -0.8). The frozen
-    coefficient error in Eq 13 of the paper is O(rho^2), so a
-    mild rho keeps ours's bias far below the MC noise floor at
-    moderate h, leaving variance reduction (= sqrt(N) scaling)
-    as the visible signal.
-
-The end result is a parameter set where ours can ride down on a
-sqrt(N) line and Euler bottoms out on its bias floor -- exactly the
-qualitative shape of the paper's Fig 2.
-
-Each (N, h) point is run ``m=50`` times.
+Each method uses the same grid of ``(N, h)`` points. Each point is run
+``m=50`` times.
 """
 
 from __future__ import annotations
@@ -82,30 +45,19 @@ from src.heston_cev_benchmark import (
     self_reference_benchmark,
 )
 from src.heston_cev_simulation import price_european_option_heston_cev
+from src.islah_approximation import price_european_option_heston_cev_islah
 from src.utils import CEVHestonModelParameters, EuropeanOption, get_rng, standard_error
 
 
 MATURITY = 4.0
 N_REPLICATIONS = 50
 
-# Ours: paper Table 7 style -- N doubled and h halved together.
-OURS_GRID = [
+COMMON_GRID = [
     (5_000,   1),    # n_steps =   4, h = 1.0
     (10_000,  2),    # n_steps =   8, h = 0.5
     (20_000,  4),    # n_steps =  16, h = 0.25
     (40_000,  8),    # n_steps =  32, h = 0.125
     (80_000,  16),   # n_steps =  64, h = 0.0625
-]
-
-# Euler: fix N at 50,000, sweep h aggressively. The finest h is
-# 0.003125, which is several hundred times finer than ours uses,
-# but should still leave Euler bottomed out on its bias floor due
-# to the absorbing boundary at F=0.
-EULER_GRID = [
-    (50_000, 5),     # n_steps =   20, h = 0.2
-    (50_000, 20),    # n_steps =   80, h = 0.05
-    (50_000, 80),    # n_steps =  320, h = 0.0125
-    (50_000, 320),   # n_steps = 1280, h = 0.003125
 ]
 
 TABLE_PATH = PROJECT_ROOT / "results" / "tables" / "heston_cev_speed_rms.csv"
@@ -136,7 +88,7 @@ def _baseline_parameters() -> CEVHestonModelParameters:
         kappa=1.0,
         theta=0.04,
         xi=0.4,
-        correlation=-0.3,         # mild rho keeps ours's frozen-coeff bias <= MC noise
+        correlation=-0.3,
         beta=0.3,                 # small beta keeps Euler near the absorbing boundary
         risk_free_rate=0.0,
     )
@@ -234,12 +186,36 @@ def _run_replications(
     return rms, mean_bias, elapsed_total
 
 
-def _ours_price(seed: int, n_paths: int, n_steps: int) -> float:
+def _frozen_left_price(seed: int, n_paths: int, n_steps: int) -> float:
     parameters = _baseline_parameters()
     option = EuropeanOption(
         strike=parameters.spot, maturity=MATURITY, option_type="call",
     )
     return price_european_option_heston_cev(
+        parameters=parameters, option=option,
+        n_steps=n_steps, n_paths=n_paths, seed=seed,
+        conditional_scheme="frozen_left",
+    ).price
+
+
+def _power_projected_price(seed: int, n_paths: int, n_steps: int) -> float:
+    parameters = _baseline_parameters()
+    option = EuropeanOption(
+        strike=parameters.spot, maturity=MATURITY, option_type="call",
+    )
+    return price_european_option_heston_cev(
+        parameters=parameters, option=option,
+        n_steps=n_steps, n_paths=n_paths, seed=seed,
+        conditional_scheme="power_projected",
+    ).price
+
+
+def _islah_price(seed: int, n_paths: int, n_steps: int) -> float:
+    parameters = _baseline_parameters()
+    option = EuropeanOption(
+        strike=parameters.spot, maturity=MATURITY, option_type="call",
+    )
+    return price_european_option_heston_cev_islah(
         parameters=parameters, option=option,
         n_steps=n_steps, n_paths=n_paths, seed=seed,
     ).price
@@ -259,8 +235,10 @@ def _euler_price(seed: int, n_paths: int, n_steps: int) -> float:
 
 SCHEMES_CONFIG = [
     # (name, pricer_fn, grid, seed_base)
-    ("ours",  _ours_price,  OURS_GRID,  10_000),
-    ("euler", _euler_price, EULER_GRID, 30_000),
+    ("frozen_left", _frozen_left_price, COMMON_GRID, 10_000),
+    ("power_projected", _power_projected_price, COMMON_GRID, 20_000),
+    ("islah", _islah_price, COMMON_GRID, 30_000),
+    ("euler", _euler_price, COMMON_GRID, 40_000),
 ]
 
 
@@ -281,7 +259,7 @@ def main() -> None:
     )
     print(f"Benchmark price = {benchmark_price:.6f}")
     print(
-        f"Each scheme sweeps its own grid (paper Fig 2 style); "
+        f"Each scheme uses the same (N, h) grid; "
         f"total {total_runs} simulations."
     )
     print()
@@ -319,37 +297,42 @@ def main() -> None:
     grand_elapsed = perf_counter() - grand_start
     _write_csv(rows, TABLE_PATH)
 
-    ours_rows = [r for r in rows if r["scheme"] == "ours"]
+    frozen_rows = [r for r in rows if r["scheme"] == "frozen_left"]
+    power_rows = [r for r in rows if r["scheme"] == "power_projected"]
+    islah_rows = [r for r in rows if r["scheme"] == "islah"]
     euler_rows = [r for r in rows if r["scheme"] == "euler"]
-
-    ours_h = ours_rows[0]["h"] if ours_rows else None
-    euler_n = euler_rows[0]["n_paths"] if euler_rows else None
 
     fig, ax = plt.subplots(figsize=(8, 5.5))
     ax.plot(
-        [r["time_seconds"] for r in ours_rows],
-        [r["rms"] for r in ours_rows],
+        [r["time_seconds"] for r in frozen_rows],
+        [r["rms"] for r in frozen_rows],
         marker="o", linewidth=2, color="tab:blue",
-        label=(
-            f"Ours (martingale-preserving CEV approx), m={N_REPLICATIONS}, "
-            f"h={ours_h:.3f}, sweep N"
-        ),
+        label=f"Frozen-left anchor, m={N_REPLICATIONS}",
+    )
+    ax.plot(
+        [r["time_seconds"] for r in power_rows],
+        [r["rms"] for r in power_rows],
+        marker="D", linewidth=2, color="tab:purple", linestyle="-.",
+        label=f"Power-projected anchor, m={N_REPLICATIONS}",
+    )
+    ax.plot(
+        [r["time_seconds"] for r in islah_rows],
+        [r["rms"] for r in islah_rows],
+        marker="s", linewidth=2, color="tab:red", linestyle="--",
+        label=f"Islah-style, m={N_REPLICATIONS}",
     )
     ax.plot(
         [r["time_seconds"] for r in euler_rows],
         [r["rms"] for r in euler_rows],
         marker="^", linewidth=2, color="tab:green", linestyle=":",
-        label=(
-            f"Asset-side truncated Euler, m={N_REPLICATIONS}, "
-            f"N={euler_n:,}, sweep h"
-        ),
+        label=f"Asset-side truncated Euler, m={N_REPLICATIONS}",
     )
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("CPU Time (seconds, total over m runs)")
     ax.set_ylabel("RMS Pricing Error")
     ax.set_title(
-        f"Speed vs Accuracy Trade-off at T = {MATURITY} "
+        f"Preliminary Speed vs Accuracy at T = {MATURITY} "
         f"(CEV-Heston, F_0={parameters.spot}, rho={parameters.correlation}, "
         f"beta={parameters.beta})"
     )

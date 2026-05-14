@@ -9,7 +9,7 @@
 The project develops two Monte Carlo pricers for European options under stochastic volatility:
 
 - **Phase 1 — SABR (`beta = 1`).** Plain Monte Carlo and conditional Monte Carlo, demonstrating textbook variance reduction by conditioning on the volatility path.
-- **Phase 2 — CEV-Heston.** A hybrid model in which the asset has CEV elasticity `beta in (0, 1]` and the variance follows the Heston / CIR process. We port the Choi-Hu-Kwok (2024) three-step simulation framework to this setting. The Phase 2 simulator preserves the martingale property `E[F_T] = F_0` exactly, with no empirical martingale correction.
+- **Phase 2 — CEV-Heston.** A hybrid model in which the asset has CEV elasticity `beta in (0, 1]` and the variance follows the Heston / CIR process. We port the Choi-Hu-Kwok (2024) three-step simulation framework to this setting. The Phase 2 simulator is a martingale-preserving stepwise scheme under the conditional CEV approximation.
 
 CEV-Heston dynamics:
 
@@ -21,7 +21,7 @@ $$
 
 The Phase 2 simulator advances `(F_t, v_t)` over each step in three sub-steps:
 
-1. **Variance step.** `v_{t+h}` and the integrated variance `int v_s ds` over the step are sampled by PyFENG's `HestonMcChoiKwok2023PoisGe` (the Choi-Kwok 2024 Poisson-conditioning scheme). This is the published reference implementation for the CIR variance side and is consumed verbatim through a thin adapter.
+1. **Variance step.** `v_{t+h}` and the integrated variance `int v_s ds` over the step are sampled by PyFENG's `HestonMcChoiKwok2023PoisGe` (the Choi-Kwok 2024 Poisson-conditioning scheme). This is the PyFENG-backed variance/integrated-variance backend and is consumed through a thin adapter.
 2. **Conditional mean.** Given the sampled `(v_{t+h}, int v ds)`, the forward-price conditional mean is computed in closed form. The key identity is the CIR Ito formula
 
 $$
@@ -30,6 +30,8 @@ $$
 
    which gives the SABR-side stochastic integral entirely from already-sampled quantities -- no extra random draws are needed for Step 2. This is the single point where the Heston port is structurally cleaner than the original SABR scheme.
 3. **Exact CEV sampling.** `F_{t+h}` is drawn from a CEV distribution via the shifted-Poisson-mixture-Gamma representation of Makarov-Glew (2010) and Kang (2014). Three elementary random variates per step (Gamma, Poisson, Gamma); no inverse-CDF root finding.
+
+The simulator keeps the direct frozen-left correlated anchor as a diagnostic baseline and also implements `power_projected`, an improved power-coordinate projected variant that reduces correlated coarse-step bias in the current experiments. The residual bias remains visible in the general correlated case and is treated as a timestep/convergence diagnostic rather than an exact-transition claim.
 
 For comparison we also implement Islah's (2009) approximation, which has been the de facto baseline in nearly every SABR / CEV-Heston simulator since 2009. Islah's scheme uses a modified CEV degree of freedom that breaks the martingale property; we follow Choi et al. (2024, Appendix B) to sample it through the same exact CEV sampler, so the comparison is on equal footing in sampling quality.
 
@@ -47,12 +49,12 @@ src/
   cev_sampling.py                 # Phase 2: exact CEV sampler (paper Algorithm 3)
   pyfeng_adapter.py               # Phase 2: PyFENG variance stepper
   cir_simulation.py               # Phase 2: Andersen QE for the xi = 0 case
-  heston_cev_simulation.py        # Phase 2: main CEV-Heston simulator (paper Algorithm 4 ported)
+  heston_cev_simulation.py        # Phase 2: main CEV-Heston simulator
   islah_approximation.py          # Phase 2: Islah baseline (paper Appendix B)
   heston_cev_benchmark.py         # Phase 2: PyFENG HestonFft / self-reference benchmarks
-experiments/                      # 9 runnable experiment scripts
+experiments/                      # runnable experiment scripts
 results/{tables,figures}/         # CSV tables and PNG figures produced by experiments
-tests/                            # 32 unit tests
+tests/                            # unit tests
 ```
 
 ## Installation
@@ -112,6 +114,8 @@ python3 experiments/experiment_parameter_sweep_nu.py
 # Phase 2
 python3 experiments/experiment_heston_cev_martingale.py        # martingale preservation
 python3 experiments/experiment_heston_cev_option_price.py      # option price vs benchmark
+python3 experiments/experiment_heston_cev_zerocorr_option_price.py  # rho = 0 diagnostic
+python3 experiments/experiment_heston_cev_timestep_convergence.py   # correlated timestep bias diagnostic
 python3 experiments/experiment_heston_cev_speed.py             # speed-vs-RMS trade-off
 ```
 
@@ -127,19 +131,23 @@ Conditional MC reduces variance by **42-46x** versus plain MC across all tested 
 
 ### Phase 2 (CEV-Heston)
 
-**Martingale preservation.** At `T = 10` the raw simulator (no EMC) gives `|E[F_T] - F_0| = 0.029`, about one Monte Carlo standard error. The forward-error curve stays inside the analytic `+/- 2 SE` band across all maturities `T = 1, ..., 10`, with no systematic drift. This reproduces Choi-Hu-Kwok (2024) Figure 3a in the Heston-CEV setting.
+**Martingale preservation.** The regenerated martingale diagnostic keeps the frozen-left scheme's forward error within two Monte Carlo SEMs across `T = 1, ..., 10`; the largest observed deviation is about `1.83` SEMs. Islah shows a systematic positive drift in the same setup.
 
 ![Forward-price error vs maturity, inside the +/- 2 SE Monte Carlo band](results/figures/heston_cev_martingale_error.png)
 
-**Option price accuracy.** Across `T = 1, ..., 10`, the ATM call price tracks a high-resolution self-reference benchmark within Monte Carlo noise. The Islah baseline is shown for direct comparison.
+**Option price diagnostic.** For `beta < 1` the benchmark is a high-resolution self-reference Monte Carlo run, not a closed-form truth price. The original frozen-left correlated anchor has a visible negative coarse-step bias; the new power-projected anchor reduces that bias but does not eliminate it.
 
 ![ATM call pricing error vs maturity: ours vs Islah baseline](results/figures/heston_cev_option_price_error.png)
 
-**Speed-vs-RMS trade-off.** Sweeping `N` and `dt` jointly at `T = 4`, the project's CEV scheme dominates Islah at fixed work as the grid is refined: Islah's RMS plateaus where its frozen-coefficient bias does not vanish, while ours continues to track Monte Carlo noise downward.
+**Correlated timestep convergence.** A fixed `T = 4` diagnostic with `n_steps = 25, 50, 100, 200, 400` shows the remaining correlated bias shrinking as the timestep grid is refined. This supports interpreting the residual error as time-discretization bias under the conditional CEV approximation, not as an exact-transition result.
+
+![Correlated CEV-Heston timestep convergence](results/figures/heston_cev_timestep_convergence.png)
+
+**Speed-vs-RMS trade-off.** The current speed figure is a preliminary diagnostic against the same self-reference benchmark. It compares frozen-left, power-projected, Islah, and truncated Euler on a common grid; it should not be read as a strict dominance ranking.
 
 ![RMS error vs CPU time: ours vs Islah vs truncated Euler baseline](results/figures/heston_cev_speed_rms_tradeoff.png)
 
-The test suite covers the core algorithms (8 martingale-preservation tests across four parameter regimes, 11 CEV-sampler tests against the noncentral chi-squared and incomplete-Gamma closed forms) plus 13 supporting tests for the integration and adapter layers, totalling 32 tests, all passing on Python 3.10 / 3.11 / 3.12.
+The test suite covers the core algorithms, special cases (`beta = 1`, `rho = 0`, `xi = 0`), the PyFENG integrated-variance scale, and a fixed-seed correlated-bias regression.
 
 ## Limitations
 

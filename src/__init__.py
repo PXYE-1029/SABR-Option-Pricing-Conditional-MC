@@ -1,5 +1,5 @@
-"""Core package for the SABR option pricing project."""
+"""Core package for the SABR and CEV-Heston option pricing project."""
 
-from .utils import EuropeanOption, SABRModelParameters, CEVHestonModelParameters
+from .utils import CEVHestonModelParameters, EuropeanOption, SABRModelParameters
 
 __all__ = ["EuropeanOption", "SABRModelParameters", "CEVHestonModelParameters"]

@@ -203,6 +203,33 @@ def simulate_heston_cev_islah(
         v_next_active = v_next[active]
         iv_active = integrated_variance[active]
 
+        if parameters.xi == 0.0:
+            # In the deterministic-variance limit the variance path
+            # carries no information about the Brownian component W^v.
+            # Correlation is therefore distributionally irrelevant:
+            # use the original CEV elasticity and the full integrated
+            # variance, instead of the Islah correlated transform.
+            F_bar_active = F_active
+            n_clamped_step = 0
+            effective_variance = iv_active
+            if parameters.beta == 1.0:
+                z = rng.standard_normal(size=F_bar_active.shape)
+                log_inc = (
+                    np.sqrt(np.maximum(effective_variance, 0.0)) * z
+                    - 0.5 * effective_variance
+                )
+                F_next_active = F_bar_active * np.exp(log_inc)
+            else:
+                F_next_active = sample_cev(
+                    initial_value=F_bar_active,
+                    sigma_squared_time=effective_variance,
+                    beta=parameters.beta,
+                    rng=rng,
+                )
+            F[active] = F_next_active
+            v = v_next
+            continue
+
         F_bar_active, n_clamped_step = _conditional_mean_islah(
             F_t=F_active,
             v_t=v_active,

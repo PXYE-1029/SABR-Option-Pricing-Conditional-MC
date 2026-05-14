@@ -116,6 +116,7 @@ def self_reference_benchmark(
     n_paths_reference: int = 500_000,
     n_steps_per_year_reference: int = 50,
     seed: int = 999_999,
+    conditional_scheme: str = "frozen_left",
 ) -> BenchmarkPrice:
     """High-resolution self-reference benchmark for ``0 < beta <= 1``.
 
@@ -142,9 +143,13 @@ def self_reference_benchmark(
         n_steps=n_steps,
         n_paths=n_paths_reference,
         seed=seed,
+        conditional_scheme=conditional_scheme,  # type: ignore[arg-type]
     )
     return BenchmarkPrice(
         price=pricing.price,
         standard_error=pricing.standard_error,
-        method=f"self_ref_n{n_paths_reference}_dt{1.0/n_steps_per_year_reference:.4f}",
+        method=(
+            f"self_ref_{conditional_scheme}_n{n_paths_reference}"
+            f"_dt{1.0/n_steps_per_year_reference:.4f}"
+        ),
     )

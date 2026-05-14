@@ -2,8 +2,9 @@
 
 Compares three quantities against time-to-maturity ``T``:
 
-  * The ATM call price under the project's CEV approximation
-    (``simulate_heston_cev_terminal``).
+  * The ATM call price under the original frozen-left CEV approximation
+    (direct Choi-Hu-Kwok Eq. 13/16b adaptation).
+  * The ATM call price under the beta-aware power-projected anchor.
   * The same price under Islah's classical approximation
     (``simulate_heston_cev_islah``), which is the de facto baseline
     used in nearly every SABR / Heston-CEV simulator since 2009.
@@ -16,13 +17,11 @@ Following Choi-Hu-Kwok (2024, Sec. 5), each maturity is run
 
   * Per-scheme bias = mean(price across m runs) - benchmark.
   * Per-scheme SEM  = stdev across runs / sqrt(m).
-  * Error bars in the figure are +/- 2 SEMs.
+  * Combined SEM    = sqrt(scheme_sem^2 + benchmark_se^2).
+  * Error bars in the figure are +/- 2 combined SEMs.
 
-The headline observation, reproducing Choi-Hu-Kwok (2024) Fig 3b in
-the Heston-CEV setting, is that Islah's pricing error grows roughly
-linearly in ``T`` (because the underlying martingale violation
-accumulates), while the project's CEV approximation tracks the
-benchmark to within Monte Carlo noise across all maturities.
+The output is a diagnostic comparison against a self-reference
+benchmark. For beta < 1 this is not a closed-form truth benchmark.
 """
 
 from __future__ import annotations
@@ -128,10 +127,17 @@ def _single_run(
     scheme: str,
 ) -> float:
     """Run one replication of the requested scheme; return the price."""
-    if scheme == "ours":
+    if scheme == "frozen_left":
         result = price_european_option_heston_cev(
             parameters=parameters, option=option,
             n_steps=n_steps, n_paths=N_PATHS, seed=seed,
+            conditional_scheme="frozen_left",
+        )
+    elif scheme == "power_projected":
+        result = price_european_option_heston_cev(
+            parameters=parameters, option=option,
+            n_steps=n_steps, n_paths=N_PATHS, seed=seed,
+            conditional_scheme="power_projected",
         )
     elif scheme == "islah":
         result = price_european_option_heston_cev_islah(
@@ -157,26 +163,36 @@ def _run_experiment_row(maturity: float) -> dict[str, float]:
 
     benchmark = _benchmark(parameters, option)
 
-    prices_ours = np.empty(N_REPLICATIONS)
+    prices_frozen = np.empty(N_REPLICATIONS)
+    prices_power = np.empty(N_REPLICATIONS)
     prices_islah = np.empty(N_REPLICATIONS)
 
     start = perf_counter()
     for replication in range(N_REPLICATIONS):
         seed = 7_000_000 + int(maturity) * 10_000 + replication
-        prices_ours[replication] = _single_run(
-            parameters, option, n_steps, seed, scheme="ours",
+        prices_frozen[replication] = _single_run(
+            parameters, option, n_steps, seed, scheme="frozen_left",
+        )
+        prices_power[replication] = _single_run(
+            parameters, option, n_steps, seed, scheme="power_projected",
         )
         prices_islah[replication] = _single_run(
             parameters, option, n_steps, seed, scheme="islah",
         )
     elapsed = perf_counter() - start
 
-    bias_ours = float(np.mean(prices_ours)) - benchmark.price
+    bias_frozen = float(np.mean(prices_frozen)) - benchmark.price
+    bias_power = float(np.mean(prices_power)) - benchmark.price
     bias_islah = float(np.mean(prices_islah)) - benchmark.price
-    std_ours = float(np.std(prices_ours, ddof=1))
+    std_frozen = float(np.std(prices_frozen, ddof=1))
+    std_power = float(np.std(prices_power, ddof=1))
     std_islah = float(np.std(prices_islah, ddof=1))
-    sem_ours = std_ours / float(np.sqrt(N_REPLICATIONS))
+    sem_frozen = std_frozen / float(np.sqrt(N_REPLICATIONS))
+    sem_power = std_power / float(np.sqrt(N_REPLICATIONS))
     sem_islah = std_islah / float(np.sqrt(N_REPLICATIONS))
+    combined_frozen = float(np.sqrt(sem_frozen * sem_frozen + benchmark.standard_error ** 2))
+    combined_power = float(np.sqrt(sem_power * sem_power + benchmark.standard_error ** 2))
+    combined_islah = float(np.sqrt(sem_islah * sem_islah + benchmark.standard_error ** 2))
 
     return {
         "maturity_T": maturity,
@@ -186,25 +202,35 @@ def _run_experiment_row(maturity: float) -> dict[str, float]:
         "benchmark_price": benchmark.price,
         "benchmark_se": benchmark.standard_error,
         "benchmark_method": benchmark.method,
-        # Ours
-        "ours_mean_price": float(np.mean(prices_ours)),
-        "ours_bias_signed": bias_ours,
-        "ours_abs_bias": abs(bias_ours),
-        "ours_stdev_across_replications": std_ours,
-        "ours_sem_of_bias": sem_ours,
-        "ours_abs_bias_in_sems": abs(bias_ours) / max(sem_ours, 1e-300),
+        # Frozen-left CEV anchor
+        "frozen_left_mean_price": float(np.mean(prices_frozen)),
+        "frozen_left_bias_signed": bias_frozen,
+        "frozen_left_abs_bias": abs(bias_frozen),
+        "frozen_left_stdev_across_replications": std_frozen,
+        "frozen_left_sem_of_bias": sem_frozen,
+        "frozen_left_combined_sem": combined_frozen,
+        "frozen_left_abs_bias_in_combined_sems": abs(bias_frozen) / max(combined_frozen, 1e-300),
+        # Power-projected CEV anchor
+        "power_projected_mean_price": float(np.mean(prices_power)),
+        "power_projected_bias_signed": bias_power,
+        "power_projected_abs_bias": abs(bias_power),
+        "power_projected_stdev_across_replications": std_power,
+        "power_projected_sem_of_bias": sem_power,
+        "power_projected_combined_sem": combined_power,
+        "power_projected_abs_bias_in_combined_sems": abs(bias_power) / max(combined_power, 1e-300),
         # Islah
         "islah_mean_price": float(np.mean(prices_islah)),
         "islah_bias_signed": bias_islah,
         "islah_abs_bias": abs(bias_islah),
         "islah_stdev_across_replications": std_islah,
         "islah_sem_of_bias": sem_islah,
-        "islah_abs_bias_in_sems": abs(bias_islah) / max(sem_islah, 1e-300),
+        "islah_combined_sem": combined_islah,
+        "islah_abs_bias_in_combined_sems": abs(bias_islah) / max(combined_islah, 1e-300),
     }
 
 
 def _plot_option_price_error(rows: list[dict[str, float]]) -> None:
-    """Plot signed pricing bias vs T, with +/- 2 SEM error bars.
+    """Plot signed pricing bias vs T, with +/- 2 combined-SEM error bars.
 
     Mirrors the visual style of the martingale experiment for
     consistency. Islah's bias is expected to grow roughly linearly
@@ -212,18 +238,26 @@ def _plot_option_price_error(rows: list[dict[str, float]]) -> None:
     violation, scaled by the option's delta).
     """
     maturities = [row["maturity_T"] for row in rows]
-    bias_ours = [row["ours_bias_signed"] for row in rows]
+    bias_frozen = [row["frozen_left_bias_signed"] for row in rows]
+    bias_power = [row["power_projected_bias_signed"] for row in rows]
     bias_islah = [row["islah_bias_signed"] for row in rows]
-    err_ours = [2.0 * row["ours_sem_of_bias"] for row in rows]
-    err_islah = [2.0 * row["islah_sem_of_bias"] for row in rows]
+    err_frozen = [2.0 * row["frozen_left_combined_sem"] for row in rows]
+    err_power = [2.0 * row["power_projected_combined_sem"] for row in rows]
+    err_islah = [2.0 * row["islah_combined_sem"] for row in rows]
 
     fig, ax = plt.subplots(figsize=(8, 5.2))
     ax.axhline(0, color="black", linestyle=":", linewidth=1, alpha=0.6)
     ax.errorbar(
-        maturities, bias_ours, yerr=err_ours,
+        maturities, bias_frozen, yerr=err_frozen,
         marker="o", linestyle="-", linewidth=2, color="tab:blue",
         capsize=3, capthick=1.2,
-        label=f"Ours (CEV approx), m={N_REPLICATIONS}",
+        label=f"Frozen-left anchor, m={N_REPLICATIONS}",
+    )
+    ax.errorbar(
+        maturities, bias_power, yerr=err_power,
+        marker="D", linestyle="-.", linewidth=2, color="tab:purple",
+        capsize=3, capthick=1.2,
+        label=f"Power-projected anchor, m={N_REPLICATIONS}",
     )
     ax.errorbar(
         maturities, bias_islah, yerr=err_islah,
@@ -234,7 +268,7 @@ def _plot_option_price_error(rows: list[dict[str, float]]) -> None:
     ax.set_xlabel("Time to Maturity (T)")
     ax.set_ylabel("ATM Call Pricing Error (price - benchmark)")
     ax.set_title(
-        f"ATM Call Pricing Error vs T: Ours vs Islah, CEV-Heston "
+        f"ATM Call Pricing Error vs T: Frozen vs Power vs Islah "
         f"(N={N_PATHS:,}, m={N_REPLICATIONS}, h={1.0/N_STEPS_PER_YEAR:.2f})"
     )
     ax.grid(True, alpha=0.3)
@@ -254,8 +288,8 @@ def main() -> None:
     )
     print(
         f"Total simulations to run: "
-        f"{len(MATURITIES) * N_REPLICATIONS * 2} "
-        f"({len(MATURITIES)} T x {N_REPLICATIONS} m x 2 schemes), "
+        f"{len(MATURITIES) * N_REPLICATIONS * 3} "
+        f"({len(MATURITIES)} T x {N_REPLICATIONS} m x 3 schemes), "
         f"plus {len(MATURITIES)} benchmark runs"
     )
     print()
@@ -268,10 +302,12 @@ def main() -> None:
         print(
             f"  T={T:>4.1f} ({row['elapsed_seconds']:.1f}s): "
             f"bench={row['benchmark_price']:.5f} (SE={row['benchmark_se']:.5f}) | "
-            f"ours bias={row['ours_bias_signed']:+.5f} +/- {2.0*row['ours_sem_of_bias']:.5f} "
-            f"({row['ours_abs_bias_in_sems']:.2f} SEMs) | "
-            f"islah bias={row['islah_bias_signed']:+.5f} +/- {2.0*row['islah_sem_of_bias']:.5f} "
-            f"({row['islah_abs_bias_in_sems']:.2f} SEMs)"
+            f"frozen bias={row['frozen_left_bias_signed']:+.5f} +/- {2.0*row['frozen_left_combined_sem']:.5f} "
+            f"({row['frozen_left_abs_bias_in_combined_sems']:.2f} cSEMs) | "
+            f"power bias={row['power_projected_bias_signed']:+.5f} +/- {2.0*row['power_projected_combined_sem']:.5f} "
+            f"({row['power_projected_abs_bias_in_combined_sems']:.2f} cSEMs) | "
+            f"islah bias={row['islah_bias_signed']:+.5f} +/- {2.0*row['islah_combined_sem']:.5f} "
+            f"({row['islah_abs_bias_in_combined_sems']:.2f} cSEMs)"
         )
 
     grand_elapsed = perf_counter() - grand_start

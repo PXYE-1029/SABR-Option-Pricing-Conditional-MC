@@ -2,7 +2,7 @@
 
 This module wraps a PyFENG Heston Monte Carlo model so it satisfies
 the ``VarianceStepper`` protocol of ``heston_cev_simulation``. It is
-the recommended production path: PyFENG ships a peer-reviewed
+the recommended PyFENG-backed path: PyFENG ships a peer-reviewed
 implementation of the Choi-Kwok (2024) Poisson-conditioning scheme for
 CIR which we should not re-implement.
 
