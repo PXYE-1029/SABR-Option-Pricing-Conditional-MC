@@ -243,7 +243,7 @@ The leading-order frozen error **survives** unconditional expectation, producing
 
 The ~11× reduction from $\rho = -0.8$ to $\rho = 0$ confirms the $\rho^2$ scaling predicted by ($\star$).
 
-**Implementation validation.** Four independent tests rule out implementation bugs:
+**Implementation validation.** Four independent tests (put into the experiments folder of this repo) rule out implementation bugs:
 
 - **$\beta = 1$ limit** — $[F]^{\beta_\ast} \equiv 1$ makes the frozen approximation trivial. Simulator matches PyFENG `HestonFft` closed form within ~1 SE.
 - **$\xi \to 0$ limit** — $v_t$ becomes deterministic, model degenerates to Black-Scholes. Simulator gives 0.2355 vs BS 0.2358 at $T = 4$.
